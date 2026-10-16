@@ -1,0 +1,191 @@
+import { randomUUID } from 'node:crypto';
+import { expect, test, type Page } from '@playwright/test';
+import { removeWalkthroughData, sql } from './db';
+
+/**
+ * Full operator walkthrough through the real UI with email + password accounts:
+ * organizer signs up and registers → admin approves → organizer creates a trek (typing its
+ * destination) and weekly departures → publishes (trek goes live automatically) → shares a
+ * direct link → a guest books through it → organizer sees the commission-free booking.
+ *
+ * Needs NEXT_PUBLIC_AUTH_MODE=password and AUTH_JWT_SECRET on the API.
+ */
+const PASSWORD_AUTH = process.env.NEXT_PUBLIC_AUTH_MODE === 'password';
+const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+const tag = randomUUID().slice(0, 6);
+const ORG_NAME = `E2E Trails ${tag}`;
+const ORG_EMAIL = `e2e-org-${tag}@test.ohviana.dev`;
+const ADMIN_EMAIL = `e2e-admin-${tag}@test.ohviana.dev`;
+const PASSWORD = `Trek-${tag}-pass!`;
+
+test.skip(!PASSWORD_AUTH, 'Requires NEXT_PUBLIC_AUTH_MODE=password');
+// The operator console is a desktop tool; the phone project covers customer journeys.
+test.skip(({ isMobile }) => isMobile, 'Desktop only');
+test.describe.configure({ mode: 'serial' });
+
+test.beforeAll(async () => {
+  await removeWalkthroughData();
+  // A throwaway admin: sign up through the API, then grant admin directly in the database.
+  const res = await fetch(`${API}/v1/auth/signup`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: ADMIN_EMAIL, password: PASSWORD, fullName: 'E2E Admin' }),
+  });
+  if (!res.ok) throw new Error(`admin signup failed: ${res.status} ${await res.text()}`);
+  const { user } = (await res.json()) as { user: { id: string } };
+  await sql`insert into platform_admins (user_id) values (${user.id}) on conflict do nothing`;
+});
+test.afterAll(removeWalkthroughData);
+
+async function openAuth(page: Page, tab: 'Sign in' | 'Create account') {
+  await page.goto('/login?next=/dashboard');
+  await page
+    .getByRole('group', { name: 'Sign in or create account' })
+    .getByRole('button', { name: tab })
+    .click();
+}
+
+async function signUp(page: Page, email: string, name: string) {
+  await openAuth(page, 'Create account');
+  await page.getByLabel('Your name').fill(name);
+  await page.getByLabel('Email').fill(email);
+  await page.getByLabel('Password').fill(PASSWORD);
+  await page.locator('button[type="submit"]').click();
+  // Path check: the sign-in URL itself contains ?next=/dashboard.
+  await page.waitForURL((url) => url.pathname.startsWith('/dashboard'));
+}
+
+async function signIn(page: Page, email: string) {
+  await openAuth(page, 'Sign in');
+  await page.getByLabel('Email').fill(email);
+  await page.getByLabel('Password').fill(PASSWORD);
+  await page.locator('button[type="submit"]').click();
+  // Path check: the sign-in URL itself contains ?next=/dashboard.
+  await page.waitForURL((url) => url.pathname.startsWith('/dashboard'));
+}
+
+async function signOut(page: Page) {
+  await page.evaluate(() => localStorage.removeItem('ohviana:session'));
+}
+
+/** IST wall-clock string for a datetime-local input, `days` from now at `hh:mm`. */
+function istLocal(days: number, hhmm: string): string {
+  const d = new Date(Date.now() + days * 86_400_000);
+  return `${d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })}T${hhmm}`;
+}
+
+test('organizer + admin walkthrough, end to end', async ({ page }) => {
+  test.setTimeout(240_000);
+  page.on('dialog', (d) => void (d.type() === 'prompt' ? d.accept('7.5') : d.accept()));
+
+  // 1. A new organizer creates an account and registers their organization.
+  await signUp(page, ORG_EMAIL, 'Ravi Organizer');
+  await expect(page.getByRole('heading', { name: 'List your treks on Ohviana' })).toBeVisible();
+  await page.getByLabel('Organization name').fill(ORG_NAME);
+  await page.getByLabel('City').fill('Bengaluru');
+  await page.getByLabel('Email', { exact: true }).fill(ORG_EMAIL);
+  await page.getByLabel('Mobile').fill('98450 12345');
+  await page.getByRole('button', { name: 'Register organization' }).click();
+  await expect(page.getByText('Awaiting approval from Ohviana')).toBeVisible();
+
+  // 2. The admin approves it with 7.5% commission (the only approval step).
+  await signOut(page);
+  await signIn(page, ADMIN_EMAIL);
+  await page.goto('/admin/organizers?status=pending');
+  const row = page.getByRole('row').filter({ hasText: ORG_NAME });
+  await row.getByRole('button', { name: 'Approve' }).click();
+  await expect(page.getByText(`${ORG_NAME}: approve done.`)).toBeVisible();
+
+  // 3. The organizer creates a trek by typing its destination — no catalog approval.
+  await signOut(page);
+  await signIn(page, ORG_EMAIL);
+  await expect(page.getByText('Awaiting approval from Ohviana')).toHaveCount(0);
+  await page.goto('/dashboard/treks');
+  await page.getByLabel('Trek name').fill(`Kudremukh Sunrise ${tag}`);
+  await page.getByLabel('Destination / peak').fill('Kudremukh');
+  await page.getByRole('button', { name: 'Create trek' }).click();
+  await page.waitForURL(/\/dashboard\/treks\/[0-9a-f-]+$/);
+
+  await page.getByLabel(/^Itinerary/).fill('Overnight bus from Bengaluru\nSummit and return');
+  await page.getByLabel(/^Included/).fill('Transport\nBreakfast and lunch\nForest permit');
+  await page.getByLabel(/^Cancellation policy/).fill('Full refund up to 7 days before departure.');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('Saved.')).toBeVisible();
+
+  // Photos: a "transport" shot (any real image will do — a screenshot saved as JPEG).
+  await page.getByLabel('These photos show').selectOption('transport');
+  const image = await page.screenshot({ type: 'jpeg', quality: 60 });
+  await page
+    .locator('input[type="file"]')
+    .setInputFiles({ name: 'bus.jpg', mimeType: 'image/jpeg', buffer: image });
+  await expect(page.locator('.photo-tile')).toHaveCount(1);
+  await expect(page.locator('.photo-tile select').first()).toHaveValue('transport');
+
+  await page.getByLabel('Name', { exact: true }).fill('Majestic Bus Stand');
+  await page.getByRole('button', { name: 'Add pickup' }).click();
+  await expect(page.getByText('Majestic Bus Stand').first()).toBeVisible();
+
+  // 4. Two weekly departures; publishing them also puts the trek live.
+  await page.getByLabel('First departure').fill(istLocal(10, '21:30'));
+  await page.getByLabel('Return', { exact: true }).fill(istLocal(12, '06:00'));
+  await page.getByLabel('Repeat weekly (weeks)').fill('2');
+  await page.getByLabel('Price per person (₹)').fill('2499');
+  await page.getByLabel('Seats', { exact: true }).fill('12');
+  await page.getByLabel('Majestic Bus Stand minutes before departure').fill('0');
+  await page.getByRole('button', { name: 'Create draft batches' }).click();
+  await expect(page.getByText('2 draft batches created')).toBeVisible();
+
+  await page.goto('/dashboard/batches?view=draft');
+  for (let i = 0; i < 2; i++) {
+    await page.getByRole('button', { name: 'Publish' }).first().click();
+    await expect(page.getByText('Batch published')).toBeVisible();
+  }
+  await page.goto('/dashboard/batches?view=upcoming');
+  await expect(page.getByRole('row').filter({ hasText: `Kudremukh Sunrise ${tag}` })).toHaveCount(
+    2,
+  );
+
+  // 5. Share a direct link for the first departure.
+  await page
+    .getByRole('row')
+    .filter({ hasText: `Kudremukh Sunrise ${tag}` })
+    .first()
+    .getByRole('link')
+    .first()
+    .click();
+  await page.getByRole('button', { name: 'Create share link' }).click();
+  const shareUrl = await page.locator('input[readonly]').inputValue();
+  expect(shareUrl).toMatch(/\/b\/[A-Za-z0-9_-]{32}$/);
+  const batchPage = page.url();
+
+  // 6. A guest books through the link (signed out).
+  await signOut(page);
+  await page.goto(shareUrl);
+  await expect(page.getByText(`You're booking directly with`)).toBeVisible();
+  // Customers see the organizer's photos.
+  await expect(page.locator('.gallery img').first()).toBeVisible();
+  await page.getByRole('link', { name: 'Book seats' }).click();
+  await page.getByLabel('Full name').fill('Ravi Kumar');
+  await page.getByLabel('Mobile').first().fill('99001 23456');
+  await page.getByLabel('Traveller 1 name').fill('Ravi Kumar');
+  await page.getByRole('button', { name: 'Confirm booking' }).click();
+  await page.waitForURL(/\/bookings\/OHV-/);
+  await expect(page.getByText("You're booked!")).toBeVisible();
+  await expect(page.getByText('TREK PASS')).toBeVisible();
+
+  // 7. The organizer sees a commission-free direct booking and downloads attendees.
+  await signIn(page, ORG_EMAIL);
+  await page.goto(batchPage);
+  const booking = page.getByRole('row').filter({ hasText: 'Ravi Kumar' });
+  await expect(booking).toContainText('Direct');
+  await expect(booking).not.toContainText('commission');
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download attendees (CSV)' }).click();
+  expect((await download).suggestedFilename()).toMatch(/^attendees-\d{4}-\d{2}-\d{2}-.*\.csv$/);
+
+  // 8. Overview totals reflect it.
+  await page.goto('/dashboard');
+  await expect(page.locator('.stat').filter({ hasText: 'Via your direct links' })).toContainText(
+    '₹2,499',
+  );
+});
