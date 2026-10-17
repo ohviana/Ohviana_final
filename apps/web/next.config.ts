@@ -18,6 +18,9 @@ const PUBLIC_ENV_KEYS = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // Dev only: keep compiled pages in memory for an hour instead of ~1 minute, so returning to a
+  // tab doesn't trigger a recompile.
+  onDemandEntries: { maxInactiveAge: 60 * 60 * 1000, pagesBufferLength: 50 },
   // Workspace packages ship TypeScript source.
   transpilePackages: ['@ohviana/contracts', '@ohviana/shared'],
   // Inline browser-safe values explicitly, since they come from the root .env.
