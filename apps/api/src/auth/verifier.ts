@@ -96,13 +96,17 @@ export interface IssuedToken {
   expiresAt: string;
 }
 
-/** Signs a session token for a password sign-in (HS256, our own issuer). */
+/** Signs a session token for a password or phone sign-in (HS256, our own issuer). */
 export async function issueSessionToken(
   secret: string,
-  user: { id: string; email: string | null },
+  user: { id: string; email: string | null; phone?: string | null },
 ): Promise<IssuedToken> {
   const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-  const accessToken = await new SignJWT({ role: 'authenticated', email: user.email ?? '' })
+  const accessToken = await new SignJWT({
+    role: 'authenticated',
+    email: user.email ?? '',
+    phone: user.phone ?? '',
+  })
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setIssuer(OHVIANA_ISSUER)
     .setAudience('authenticated')
@@ -142,7 +146,7 @@ export function createCompositeVerifier(opts: {
 
 function createLocalSessionVerifier(key: Uint8Array): TokenVerifier {
   return async (token) => {
-    let payload: JWTPayload & { email?: string; role?: string };
+    let payload: JWTPayload & { email?: string; phone?: string; role?: string };
     try {
       ({ payload } = await jwtVerify(token, key, {
         issuer: OHVIANA_ISSUER,
@@ -159,7 +163,7 @@ function createLocalSessionVerifier(key: Uint8Array): TokenVerifier {
     return {
       userId: payload.sub,
       email: blankToNull(payload.email)?.toLowerCase() ?? null,
-      phone: null,
+      phone: blankToNull(payload.phone),
       fullName: null,
       sessionId: null,
     };

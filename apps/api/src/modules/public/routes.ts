@@ -13,6 +13,7 @@ import {
   PublicTrekList,
   SlugParams,
   TokenParams,
+  TrekDateList,
   TrekSearchQuery,
 } from '@ohviana/contracts';
 import {
@@ -24,6 +25,7 @@ import {
   searchOrganizers,
   searchTreks,
   trekBatches,
+  trekDates,
 } from './service';
 import { LIMITS } from '../../plugins/rate-limit';
 
@@ -69,6 +71,19 @@ export const publicRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request) => getTrek(app.db, request.params.slug),
+  );
+
+  app.get(
+    '/treks/:slug/dates',
+    {
+      schema: {
+        tags,
+        summary: 'Upcoming departure days of a trek, summarised across organizers',
+        params: SlugParams,
+        response: { 200: TrekDateList, ...errors },
+      },
+    },
+    async (request) => trekDates(app.db, request.params.slug),
   );
 
   app.get(

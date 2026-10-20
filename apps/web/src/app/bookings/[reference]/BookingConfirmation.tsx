@@ -103,7 +103,8 @@ export function BookingConfirmation({ reference }: { reference: string }) {
         <h1>Booking {reference}</h1>
         <p className="muted">
           We can&apos;t show this booking on this device. Open it from the browser you booked with,
-          or <Link href="/login">sign in</Link> if you booked while signed in.
+          or find it in <Link href="/my-bookings">My bookings</Link> by signing in with the mobile
+          number you booked with.
         </p>
       </div>
     );

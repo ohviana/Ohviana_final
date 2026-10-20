@@ -13,3 +13,9 @@ export function toE164(input: string): string | null {
   if (/^91[6-9]\d{9}$/.test(digits)) return `+${digits}`;
   return null;
 }
+
+/** "+919876543210" → "+91 98765 43210" for display; other numbers unchanged. */
+export function prettyPhone(phone: string): string {
+  const m = /^\+91(\d{5})(\d{5})$/.exec(phone);
+  return m ? `+91 ${m[1]} ${m[2]}` : phone;
+}

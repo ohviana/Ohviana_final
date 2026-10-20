@@ -22,12 +22,16 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
   const cursor = one(sp.cursor);
   const difficultyRaw = one(sp.difficulty);
   const difficulty = DIFFICULTIES.includes(difficultyRaw as never) ? difficultyRaw : undefined;
+  // "Other treks in <district>" from a trek page.
+  const district = one(sp.district)?.trim().slice(0, 80) || undefined;
 
   let error: string | null = null;
   const [treks, organizers] = await Promise.all([
-    apiFetch(`/v1/treks${qs({ query, from, to, difficulty, cursor, limit: 24 })}`, PublicTrekList, {
-      next: { revalidate: 30 },
-    }).catch((err: unknown) => {
+    apiFetch(
+      `/v1/treks${qs({ query, from, to, difficulty, district, cursor, limit: 24 })}`,
+      PublicTrekList,
+      { next: { revalidate: 30 } },
+    ).catch((err: unknown) => {
       error =
         err instanceof ApiError && err.status === 400
           ? err.message
@@ -50,22 +54,34 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
         <h1 style={{ margin: 0 }}>
           {query
             ? `Results for “${query}”`
-            : difficulty === 'easy'
-              ? 'Beginner-friendly treks'
-              : 'Explore treks'}
+            : district
+              ? `Treks in ${district}`
+              : difficulty === 'easy'
+                ? 'Beginner-friendly treks'
+                : 'Explore treks'}
         </h1>
         <div className="card">
           <SearchForm query={query} from={from} to={to} difficulty={difficulty} />
-          {difficulty && (
+          {(difficulty || district) && (
             <div className="chips">
-              <span
-                className="chip"
-                style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
-              >
-                <Icon name="check" size={14} /> Difficulty: {difficulty}
-              </span>
+              {district && (
+                <span
+                  className="chip"
+                  style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
+                >
+                  <Icon name="pin" size={14} /> Area: {district}
+                </span>
+              )}
+              {difficulty && (
+                <span
+                  className="chip"
+                  style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
+                >
+                  <Icon name="check" size={14} /> Difficulty: {difficulty}
+                </span>
+              )}
               <Link className="chip" href={`/search${qs({ query, from, to })}`}>
-                Clear filter
+                Clear {difficulty && district ? 'filters' : 'filter'}
               </Link>
             </div>
           )}
@@ -112,7 +128,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
           {treks.nextCursor && (
             <Link
               className="btn secondary"
-              href={`/search${qs({ query, from, to, difficulty, cursor: treks.nextCursor })}`}
+              href={`/search${qs({ query, from, to, difficulty, district, cursor: treks.nextCursor })}`}
             >
               More treks
             </Link>

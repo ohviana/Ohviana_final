@@ -41,6 +41,21 @@ npm run user:set-password -- someone@example.com 'NewPass123'
 Other modes: `supabase` (magic-link email) or `dev` (local testing, email only; also set the
 API's `AUTH_MODE=dev`). Restart `dev:api` and `dev:web` after changing modes.
 
+## Customer sign-in (mobile + SMS code)
+
+Customers never see `/login`. At checkout, **Confirm booking** texts a 6-digit code to the
+contact mobile; entering it signs them in (creating their account the first time) and books.
+**My bookings** signs in the same way. Bookings always belong to a signed-in account.
+
+No SMS provider is connected yet (`SMS_PROVIDER=log`): the code appears in the `dev:api` window:
+
+```
+Sign-in code for +91******3210: 482913
+```
+
+A number can get a new code every 30 s, at most 5 per hour; a code lasts 5 minutes and allows
+5 wrong tries. For the browser tests set `OTP_DEV_CODE=123456` in `.env` (every code is then 123456) and restart `dev:api`.
+
 ## 2. Start the app
 
 Open **three PowerShell windows** in the project folder:

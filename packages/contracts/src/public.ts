@@ -124,6 +124,26 @@ export type PublicBatchQuery = z.infer<typeof PublicBatchQuery>;
 
 export const PublicBatchList = paginated(PublicBatch);
 
+/**
+ * One departure day (IST) of a trek, summarised across organizers: what the date picker on the
+ * trek page shows before anyone chooses a date. Sold-out and closed days are included.
+ */
+export const TrekDate = z.object({
+  date: IstDate,
+  departureCount: z.number().int(),
+  organizerCount: z.number().int(),
+  /** At least one departure that day can still be booked. */
+  bookable: z.boolean(),
+  /** Cheapest bookable departure that day (null when none is bookable). */
+  minPricePaise: z.number().int().nullable(),
+  /** Free seats across that day's bookable departures. */
+  seatsLeft: z.number().int(),
+});
+export type TrekDate = z.infer<typeof TrekDate>;
+
+export const TrekDateList = z.object({ items: z.array(TrekDate) });
+export type TrekDateList = z.infer<typeof TrekDateList>;
+
 // ---------- Organizers ----------
 
 export const OrganizerSearchQuery = PaginationQuery.extend({

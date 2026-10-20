@@ -19,6 +19,7 @@ import {
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
 import type { DbClient } from '@ohviana/db';
+import { createLogOtpSender, type OtpSender } from './auth/sms';
 import {
   createCompositeVerifier,
   createSupabaseVerifier,
@@ -58,6 +59,8 @@ export interface BuildAppOptions {
   dbClient?: DbClient;
   /** Override access-token verification (tests sign tokens with a local key). */
   verifier?: TokenVerifier;
+  /** Override how phone sign-in codes are delivered (tests capture them). */
+  otpSender?: OtpSender;
 }
 
 export async function buildApp(config: Config, opts: BuildAppOptions = {}): Promise<App> {
@@ -115,6 +118,9 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
   if (config.AUTH_MODE === 'dev') {
     app.log.warn('AUTH_MODE=dev: password-less x-dev-user login is ON (testing only)');
   }
+  if (config.AUTH_JWT_SECRET && config.SMS_PROVIDER === 'log' && !opts.otpSender) {
+    app.log.warn('SMS_PROVIDER=log: phone sign-in codes are written to this log, not sent');
+  }
   await app.register(metricsPlugin, { token: config.METRICS_TOKEN });
   await app.register(rateLimitPlugin, {
     enabled: config.RATE_LIMIT_ENABLED,
@@ -156,7 +162,12 @@ export async function buildApp(config: Config, opts: BuildAppOptions = {}): Prom
 
   await app.register(healthRoutes, { prefix: '/v1', version: config.APP_VERSION });
   if (config.AUTH_JWT_SECRET) {
-    await app.register(authRoutes, { prefix: '/v1', secret: config.AUTH_JWT_SECRET });
+    await app.register(authRoutes, {
+      prefix: '/v1',
+      secret: config.AUTH_JWT_SECRET,
+      otpSender: opts.otpSender ?? createLogOtpSender(app.log),
+      otpDevCode: config.OTP_DEV_CODE,
+    });
   }
   await app.register(meRoutes, { prefix: '/v1' });
   await app.register(adminRoutes, { prefix: '/v1/admin' });

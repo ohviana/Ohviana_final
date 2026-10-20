@@ -15,6 +15,7 @@ import type {
   PublicOrganizer,
   PublicTrekDetail,
   PublicTrekSummary,
+  TrekDateList,
   TrekSearchQuery,
 } from '@ohviana/contracts';
 import { escapeLike } from '@ohviana/shared';
@@ -173,14 +174,54 @@ async function listVisibleBatches(db: Database, q: PublicBatchQuery, scope: SQL)
   return { items: await toPublicBatches(db, page.items, now), nextCursor: page.nextCursor };
 }
 
-/** Compare departures of one canonical trek across approved organizers. */
-export async function trekBatches(db: Database, slug: string, q: PublicBatchQuery) {
+async function publishedTrekId(db: Database, slug: string): Promise<string> {
   const [trek] = await db
     .select({ id: catalogTreks.id })
     .from(catalogTreks)
     .where(and(eq(catalogTreks.slug, slug), eq(catalogTreks.status, 'published')));
   if (!trek) throw notFound('Trek');
-  return listVisibleBatches(db, q, eq(catalogTreks.id, trek.id));
+  return trek.id;
+}
+
+/** Compare departures of one canonical trek across approved organizers. */
+export async function trekBatches(db: Database, slug: string, q: PublicBatchQuery) {
+  return listVisibleBatches(db, q, eq(catalogTreks.id, await publishedTrekId(db, slug)));
+}
+
+/** Upcoming departure days shown before a date is picked; a year ahead is plenty. */
+const MAX_TREK_DATES = 120;
+
+/** A trek's upcoming departure days (IST), summarised across organizers, soonest first. */
+export async function trekDates(db: Database, slug: string): Promise<TrekDateList> {
+  const trekId = await publishedTrekId(db, slug);
+  const now = new Date();
+  const day = sql<string>`to_char(${batches.departureAt} at time zone 'Asia/Kolkata', 'YYYY-MM-DD')`;
+  const bookable = sql`(${batches.confirmedSeats} < ${batches.capacity} and ${batches.bookingCutoffAt} > ${now.toISOString()}::timestamptz)`;
+  const rows = await db
+    .select({
+      date: day,
+      departureCount: sql<number>`count(*)::int`,
+      organizerCount: sql<number>`count(distinct ${batches.organizerId})::int`,
+      bookable: sql<boolean>`bool_or(${bookable})`,
+      minPricePaise: sql<
+        number | null
+      >`(min(${batches.pricePaise}) filter (where ${bookable}))::int`,
+      seatsLeft: sql<number>`coalesce(sum(${batches.capacity} - ${batches.confirmedSeats}) filter (where ${bookable}), 0)::int`,
+    })
+    .from(batches)
+    .innerJoin(organizerTreks, eq(organizerTreks.id, batches.organizerTrekId))
+    .innerJoin(organizers, eq(organizers.id, batches.organizerId))
+    .innerJoin(catalogTreks, eq(catalogTreks.id, organizerTreks.catalogTrekId))
+    .where(
+      and(
+        ...visibleBatchConditions({ start: now, end: null }, false, now),
+        eq(catalogTreks.id, trekId),
+      ),
+    )
+    .groupBy(day)
+    .orderBy(day)
+    .limit(MAX_TREK_DATES);
+  return { items: rows };
 }
 
 export async function getPublicBatch(db: Database, id: string): Promise<PublicBatch> {

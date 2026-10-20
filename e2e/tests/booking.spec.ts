@@ -1,36 +1,54 @@
 import { expect, test, type Page } from '@playwright/test';
-import { bookingByReference, removeBookings, seedDirectLinkToken } from './db';
+import { bookingByReference, removeBookings, removePhoneSignIns, seedDirectLinkToken } from './db';
+import { enterPhoneCode, testPhone } from './phone';
 
 /** Requires seed data: `npm run db:seed` (Kudremukh, Ghats Trail Co., ...). */
 
 const made: string[] = [];
+const phones: string[] = [];
 
 test.afterEach(async () => {
   await removeBookings(made.splice(0));
+  await removePhoneSignIns(phones.splice(0));
 });
 
+/** Fills checkout with a fresh mobile number and returns it (E.164). */
 async function fillCheckout(page: Page, opts: { phone?: string } = {}) {
+  const fresh = testPhone();
+  phones.push(fresh.e164);
   await expect(page.getByRole('heading', { name: /^Book / })).toBeVisible();
   await page.getByLabel('Full name').fill('Asha Rao');
   await page
     .getByLabel('Mobile')
     .first()
-    .fill(opts.phone ?? '98765 43210');
+    .fill(opts.phone ?? fresh.typed);
   await page.getByLabel(/^Email/).fill('asha.e2e@example.com');
   await page.getByLabel('Traveller 1 name').fill('Asha Rao');
   const pickup = page.getByLabel('Pickup point');
   if (await pickup.count()) await pickup.selectOption({ index: 1 });
+  return fresh.e164;
+}
+
+/** Trek page: choose the first upcoming date, which lists that day's organizers. */
+async function pickFirstDate(page: Page) {
+  await expect(page.getByRole('heading', { name: 'Pick a date' })).toBeVisible();
+  await page.locator('.date-card').first().click();
+  await page.waitForURL(/[?&]date=\d{4}-\d{2}-\d{2}/);
+  await expect(page.getByText(/organizers? runs? this date/)).toBeVisible();
 }
 
 async function confirmAndGetReference(page: Page): Promise<string> {
   await page.getByRole('button', { name: 'Confirm booking' }).click();
+  await enterPhoneCode(page);
   await page.waitForURL(/\/bookings\/OHV-[A-Z0-9]{8}$/);
   const reference = page.url().split('/').pop()!;
   made.push(reference);
   return reference;
 }
 
-test('marketplace journey: search → compare → book → confirmation → cancel', async ({ page }) => {
+test('marketplace journey: search → pick a date → book → confirmation → cancel', async ({
+  page,
+}) => {
   await page.goto('/');
   await page.getByLabel('Where do you want to trek?').fill('kudremuk'); // typo on purpose
   await page.getByRole('button', { name: 'Search' }).click();
@@ -42,12 +60,10 @@ test('marketplace journey: search → compare → book → confirmation → canc
     .click();
   await expect(page.getByRole('heading', { level: 1, name: 'Kudremukh' })).toBeVisible();
 
-  await page.getByLabel('Sort by').selectOption('price_asc');
-  await page.getByRole('button', { name: 'Apply' }).click();
-  await page.waitForURL(/sort=price_asc/);
+  await pickFirstDate(page);
 
   await page.getByRole('link', { name: 'Book', exact: true }).first().click();
-  await fillCheckout(page);
+  const phone = await fillCheckout(page);
   const reference = await confirmAndGetReference(page);
 
   await expect(page.getByText("You're booked!")).toBeVisible();
@@ -59,7 +75,7 @@ test('marketplace journey: search → compare → book → confirmation → canc
   expect(row).toMatchObject({
     status: 'confirmed',
     source: 'MARKETPLACE',
-    contact_phone: '+919876543210',
+    contact_phone: phone,
   });
 
   // Reload: the booking is still viewable as a guest on this device.
@@ -90,6 +106,7 @@ test('direct link journey books commission-free with the organizer', async ({ pa
 
 test('checkout explains invalid input instead of submitting', async ({ page }) => {
   await page.goto('/treks/kudremukh');
+  await pickFirstDate(page);
   await page.getByRole('link', { name: 'Book', exact: true }).first().click();
   await fillCheckout(page, { phone: '12345' });
   await page.getByRole('button', { name: 'Confirm booking' }).click();
@@ -112,6 +129,7 @@ test('trek pages are indexable; checkout is not', async ({ page }) => {
     /\/treks\/kudremukh$/,
   );
   await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
+  await pickFirstDate(page);
   await page.getByRole('link', { name: 'Book', exact: true }).first().click();
   await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', /noindex/);
 });

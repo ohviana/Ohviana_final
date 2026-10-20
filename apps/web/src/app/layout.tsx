@@ -2,8 +2,11 @@ import type { Metadata, Viewport } from 'next';
 import { Plus_Jakarta_Sans } from 'next/font/google';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { AuthNav } from '@/components/AuthNav';
+import { BrandMark } from '@/components/BrandMark';
 import { Icon } from '@/components/Icon';
+import { SiteNav } from '@/components/SiteNav';
+import { THEME_SCRIPT } from '@/components/ThemeToggle';
+import { SOCIAL_LINKS } from '@/lib/social';
 import './globals.css';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
@@ -15,7 +18,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: { default: 'Ohviana — Book trekking departures', template: '%s · Ohviana' },
   description:
-    'Compare dated trek departures from verified organizers in the Western Ghats and beyond, and book your seats.',
+    'Book treks in the Western Ghats and beyond with verified organizers. See dates, prices and pickup points, and reserve your seats in minutes.',
   openGraph: { siteName: 'Ohviana', type: 'website', locale: 'en_IN' },
 };
 
@@ -28,7 +31,17 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en-IN" className={font.variable}>
+    // Smooth scrolling is for in-page anchors; this tells Next to skip it on route changes.
+    // suppressHydrationWarning: THEME_SCRIPT sets data-theme before React hydrates.
+    <html
+      lang="en-IN"
+      className={font.variable}
+      data-scroll-behavior="smooth"
+      suppressHydrationWarning
+    >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body>
         {process.env.NEXT_PUBLIC_AUTH_MODE === 'dev' && (
           <div className="dev-banner" role="note">
@@ -38,44 +51,57 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <header className="site-header">
           <div className="inner">
             <Link href="/" className="brand" aria-label="Ohviana home">
-              <span className="brand-mark">
-                <Icon name="mountain" size={20} />
-              </span>
+              <BrandMark />
               Ohviana
             </Link>
-            <nav className="nav" aria-label="Main">
-              <Link href="/search">Explore treks</Link>
-              <AuthNav />
-            </nav>
+            <SiteNav />
           </div>
         </header>
         <main>{children}</main>
         <footer className="site-footer">
           <div className="inner">
-            <div className="stack" style={{ gap: 8 }}>
+            <div className="stack" style={{ gap: 10 }}>
               <span className="brand">
-                <span className="brand-mark">
-                  <Icon name="mountain" size={20} />
-                </span>
+                <BrandMark />
                 Ohviana
               </span>
-              <span>Compare and book trek departures from verified organizers.</span>
-            </div>
-            <div>
-              <h4>Explore</h4>
-              <Link href="/search">All treks</Link>
-              <Link href="/search?difficulty=easy">Beginner friendly</Link>
-              <Link href="/my-bookings">My bookings</Link>
+              <span>Discover adventures. Book with confidence.</span>
+              <div className="social">
+                {SOCIAL_LINKS.map((s) => (
+                  <a
+                    key={s.name}
+                    href={s.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Ohviana on ${s.name}`}
+                  >
+                    <Icon name={s.icon} size={20} />
+                  </a>
+                ))}
+              </div>
             </div>
             <div>
               <h4>For organizers</h4>
               <Link href="/dashboard">List your treks</Link>
+              {/* Signed out, /dashboard is the organizer pitch page. */}
+              <Link href="/dashboard">Why Ohviana?</Link>
               <Link href="/login?next=/dashboard">Organizer sign in</Link>
-              <Link href="/dashboard">Organizer dashboard</Link>
+              <Link href="/organizer-verification">Organizer verification</Link>
+            </div>
+            <div>
+              <h4>Support</h4>
+              <Link href="/contact">Contact us</Link>
+            </div>
+            <div>
+              <h4>Company &amp; legal</h4>
+              <Link href="/about">About Ohviana</Link>
+              <Link href="/privacy">Privacy policy</Link>
+              <Link href="/terms">Terms of service</Link>
+              <Link href="/organizer-terms">Organizer terms</Link>
             </div>
           </div>
           <div className="footer-bottom">
-            © {new Date().getFullYear()} Ohviana · All times shown in India Standard Time (IST)
+            <span>© {new Date().getFullYear()} Ohviana. All rights reserved.</span>
           </div>
         </footer>
       </body>

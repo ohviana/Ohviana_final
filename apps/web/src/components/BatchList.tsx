@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { PublicBatch } from '@ohviana/contracts';
 import { IST, dateRange, dateTime, durationLabel, price, seatsLabel } from '@/lib/format';
+import { Avatar } from './dash/ui';
 import { Icon } from './Icon';
 
 interface Props {
@@ -11,6 +12,11 @@ interface Props {
   showTrek?: boolean;
   /** Direct-link token to carry into checkout. */
   via?: string | undefined;
+  /**
+   * All rows share one departure day (trek page with a date chosen): lead with the organizer
+   * instead of the date.
+   */
+  byOrganizer?: boolean;
 }
 
 function AvailabilityBadge({ b }: { b: PublicBatch }) {
@@ -36,32 +42,58 @@ function DateBlock({ iso }: { iso: string }) {
 }
 
 /** Departure comparison, one card per departure (date · details · price & book). */
-export function BatchList({ batches, showOrganizer = true, showTrek = false, via }: Props) {
+export function BatchList({
+  batches,
+  showOrganizer = true,
+  showTrek = false,
+  via,
+  byOrganizer = false,
+}: Props) {
   const viaQs = via ? `?via=${encodeURIComponent(via)}` : '';
   return (
     <ul className="batch-list">
       {batches.map((b) => (
-        <li key={b.id} className="card batch-row">
-          <DateBlock iso={b.departureAt} />
-          <div className="stack" style={{ gap: 4 }}>
-            <span className="when">
-              {showTrek ? b.trek.title : dateRange(b.departureAt, b.returnAt)}
-            </span>
-            <span className="meta-line">
-              <Icon name="clock" size={14} />
-              <span>
-                Departs {dateTime(b.departureAt)} · {durationLabel(b.departureAt, b.returnAt)}
-              </span>
-            </span>
-            {showOrganizer && (
-              <span className="meta-line">
+        <li
+          key={b.id}
+          className={`card batch-row${b.availability === 'available' ? '' : ' muted-row'}`}
+        >
+          {byOrganizer ? <Avatar name={b.organizer.name} /> : <DateBlock iso={b.departureAt} />}
+          {byOrganizer ? (
+            <div className="stack" style={{ gap: 4 }}>
+              <span className="when meta-line">
                 <Link href={`/organizers/${b.organizer.slug}`}>{b.organizer.name}</Link>
                 <span className="verified" title="Verified by Ohviana">
                   <Icon name="shield" size={14} />
                 </span>
               </span>
-            )}
-          </div>
+              <span className="meta-line">
+                <Icon name="clock" size={14} />
+                <span>
+                  Departs {dateTime(b.departureAt)} · {durationLabel(b.departureAt, b.returnAt)}
+                </span>
+              </span>
+            </div>
+          ) : (
+            <div className="stack" style={{ gap: 4 }}>
+              <span className="when">
+                {showTrek ? b.trek.title : dateRange(b.departureAt, b.returnAt)}
+              </span>
+              <span className="meta-line">
+                <Icon name="clock" size={14} />
+                <span>
+                  Departs {dateTime(b.departureAt)} · {durationLabel(b.departureAt, b.returnAt)}
+                </span>
+              </span>
+              {showOrganizer && (
+                <span className="meta-line">
+                  <Link href={`/organizers/${b.organizer.slug}`}>{b.organizer.name}</Link>
+                  <span className="verified" title="Verified by Ohviana">
+                    <Icon name="shield" size={14} />
+                  </span>
+                </span>
+              )}
+            </div>
+          )}
           <div className="stack small batch-row-extra" style={{ gap: 6 }}>
             {b.pickups.length > 0 && (
               <span className="meta-line">

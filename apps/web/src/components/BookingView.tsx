@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { CustomerBooking } from '@ohviana/contracts';
-import { dateRange, dateTime, price } from '@/lib/format';
+import { dateRange, dateTime, dateTimeIst, price } from '@/lib/format';
 
 /** Read-only booking summary shared by the confirmation page and "My bookings". */
 export function BookingView({
@@ -36,13 +36,13 @@ export function BookingView({
         <dt>Dates</dt>
         <dd>
           {dateRange(b.batch.departureAt, b.batch.returnAt)} · departs{' '}
-          {dateTime(b.batch.departureAt)}
+          {dateTimeIst(b.batch.departureAt)}
         </dd>
         {b.pickup && (
           <>
             <dt>Pickup</dt>
             <dd>
-              {b.pickup.name} at {dateTime(b.pickup.pickupAt)}
+              {b.pickup.name} at {dateTimeIst(b.pickup.pickupAt)}
             </dd>
           </>
         )}
@@ -56,7 +56,7 @@ export function BookingView({
                 {g.pickup && g.pickup.name !== b.pickup?.name && (
                   <span className="muted small">
                     {' '}
-                    · boards at {g.pickup.name}, {dateTime(g.pickup.pickupAt)}
+                    · boards at {g.pickup.name}, {dateTimeIst(g.pickup.pickupAt)}
                   </span>
                 )}
               </li>

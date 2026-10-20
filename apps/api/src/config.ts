@@ -41,6 +41,16 @@ const EnvSchema = z.object({
    * password endpoints are off and only Supabase tokens are accepted.
    */
   AUTH_JWT_SECRET: z.string().min(32).optional(),
+  /**
+   * How phone sign-in codes are delivered. `log` (TEMPORARY, until an SMS provider is
+   * connected): the code is written to the API log instead of being sent.
+   */
+  SMS_PROVIDER: z.enum(['log']).default('log'),
+  /** Testing only: every sign-in code is this 6-digit value. Refused when NODE_ENV=production. */
+  OTP_DEV_CODE: z
+    .string()
+    .regex(/^\d{6}$/)
+    .optional(),
 });
 
 export type Config = z.infer<typeof EnvSchema>;
@@ -53,6 +63,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (parsed.data.AUTH_MODE === 'dev' && parsed.data.NODE_ENV === 'production') {
     throw new Error('AUTH_MODE=dev (password-less testing login) is not allowed in production');
+  }
+  if (parsed.data.OTP_DEV_CODE && parsed.data.NODE_ENV === 'production') {
+    throw new Error('OTP_DEV_CODE (fixed sign-in code) is not allowed in production');
   }
   return parsed.data;
 }

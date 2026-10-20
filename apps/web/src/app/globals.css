@@ -34,8 +34,9 @@
   color-scheme: light;
 }
 
+/* Dark: follows the device unless the visitor picked a theme (data-theme, see ThemeToggle). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --bg: #0a110e;
     --surface: #111b16;
     --surface-2: #16221c;
@@ -62,6 +63,34 @@
     --shadow-lg: 0 18px 50px rgb(0 0 0 / 0.45);
     color-scheme: dark;
   }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0a110e;
+  --surface: #111b16;
+  --surface-2: #16221c;
+  --surface-3: #1c2b23;
+  --fg: #e8f0ea;
+  --muted: #95a69c;
+  --border: #233229;
+  --accent: #34d399;
+  --accent-strong: #6ee7b7;
+  --accent-fg: #052014;
+  --accent-soft: #0f2c20;
+  --sun: #fbbf24;
+  --sun-soft: #2c230d;
+  --sun-fg: #fcd34d;
+  --warn: #fbbf24;
+  --warn-soft: #2c230d;
+  --danger: #f87171;
+  --danger-soft: #331614;
+  --hero-1: #04170f;
+  --hero-2: #0a3d27;
+  --hero-3: #0f6a43;
+  --shadow-sm: none;
+  --shadow: 0 1px 0 rgb(255 255 255 / 0.03);
+  --shadow-lg: 0 18px 50px rgb(0 0 0 / 0.45);
+  color-scheme: dark;
 }
 
 /* ---------- Base ---------- */
@@ -229,14 +258,21 @@ code {
 }
 
 .brand-mark {
-  display: grid;
-  place-items: center;
+  display: block;
   width: 34px;
   height: 34px;
-  border-radius: 10px;
-  color: #fff;
-  background: linear-gradient(135deg, var(--hero-2), var(--hero-3));
-  box-shadow: 0 4px 12px rgb(14 122 75 / 0.35);
+  flex: none;
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+/* The icon file has a dark margin around its rounded tile: zoom past it so only the tile shows. */
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.18);
 }
 
 .nav {
@@ -258,6 +294,47 @@ code {
 
 .nav a:hover {
   background: var(--surface-2);
+}
+
+.nav .nav-who {
+  color: var(--muted);
+  padding: 7px 10px;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-toggle {
+  min-height: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 999px;
+  border-color: var(--border);
+  background: transparent;
+  color: var(--fg);
+}
+
+.theme-toggle:hover {
+  background: var(--surface-2);
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+.nav button.nav-signout {
+  padding: 7px 10px;
+  font-weight: 550;
+}
+
+/* Secondary audience (organizers): present, but quieter than the customer links. */
+.nav a.nav-quiet {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.nav a.nav-quiet:hover {
+  color: var(--fg);
 }
 
 .nav a.nav-cta {
@@ -303,11 +380,48 @@ code {
   color: var(--accent);
 }
 
+.contact-list {
+  display: grid;
+  gap: 12px;
+  max-width: 520px;
+}
+
+a.card.contact-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.contact-value {
+  overflow-wrap: anywhere;
+}
+
+.site-footer .social {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.site-footer .social a {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
 .footer-bottom {
   border-top: 1px solid var(--border);
   padding: 14px 16px;
-  text-align: center;
   font-size: 0.8rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 16px;
+  text-align: center;
 }
 
 /* ---------- Forms & buttons ---------- */
@@ -430,6 +544,26 @@ button.secondary:hover,
   background: var(--surface-2);
   border-color: var(--border);
   box-shadow: none;
+}
+
+/* A button that reads as an inline link (e.g. "Change" next to a phone number). */
+button.link {
+  display: inline;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+button.link:hover {
+  background: none;
+  box-shadow: none;
+  color: var(--accent-strong);
 }
 
 button.danger {
@@ -815,6 +949,145 @@ a.card:hover {
   letter-spacing: 0;
 }
 
+/* ---------- Trek page: pick a date, then an organizer ---------- */
+.date-month {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.date-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.date-card {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
+  text-decoration: none;
+  transition:
+    border-color 0.15s,
+    transform 0.15s;
+}
+
+.date-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.date-card .dow {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+
+.date-card .day {
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.date-card .mon {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.date-card .from {
+  font-weight: 650;
+}
+
+.date-card .note {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.date-card.unavailable,
+.date-chip.unavailable {
+  opacity: 0.55;
+}
+
+.date-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 8px;
+  scrollbar-width: thin;
+}
+
+.date-chip {
+  flex: none;
+  display: grid;
+  justify-items: center;
+  min-width: 84px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
+  text-decoration: none;
+  line-height: 1.25;
+}
+
+.date-chip:hover {
+  border-color: var(--accent);
+}
+
+.date-chip[aria-current] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.date-chip .dow {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.date-chip .day {
+  font-weight: 750;
+}
+
+.date-chip .from {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.batch-row.muted-row {
+  opacity: 0.6;
+}
+
+.option-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+a.card.option-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 100%;
+}
+
 /* ---------- Departure list (redBus-style rows) ---------- */
 .batch-list {
   display: flex;
@@ -862,6 +1135,11 @@ a.card:hover {
   text-transform: uppercase;
 }
 
+/* Phones: pickups and inclusions take a full row instead of widening the date/avatar column. */
+.batch-row .batch-row-extra {
+  grid-column: 1 / -1;
+}
+
 .batch-row .when {
   font-weight: 750;
   font-size: 1.05rem;
@@ -885,6 +1163,10 @@ a.card:hover {
 
   .batch-row .actions {
     min-width: 150px;
+  }
+
+  .batch-row .batch-row-extra {
+    grid-column: auto;
   }
 
   .batch-row .actions {
@@ -1475,8 +1757,55 @@ dd {
     margin-right: 12px;
   }
 
+  /* Keep logo + both links on one row down to 360px wide. */
+  .site-header .inner {
+    gap: 8px;
+  }
+
+  .brand {
+    font-size: 1.15rem;
+  }
+
+  .nav {
+    flex-wrap: nowrap;
+    gap: 2px;
+    font-size: 0.875rem;
+  }
+
   .nav a {
-    padding: 6px 8px;
+    padding: 6px 7px;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 400px) {
+    .nav-long {
+      display: none;
+    }
+  }
+
+  @media (max-width: 350px) {
+    .brand {
+      font-size: 1rem;
+      gap: 6px;
+    }
+
+    .nav {
+      font-size: 0.8rem;
+    }
+
+    .nav a {
+      padding: 6px 4px;
+    }
+  }
+
+  .theme-toggle {
+    width: 32px;
+    height: 32px;
+  }
+
+  /* No room on phones; organizers find it in the home page banner and the footer. */
+  .nav a.nav-quiet {
+    display: none;
   }
 }
 

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
-import { removeWalkthroughData, sql } from './db';
+import { removePhoneSignIns, removeWalkthroughData, sql } from './db';
+import { enterPhoneCode, testPhone } from './phone';
 
 /**
  * Full operator walkthrough through the real UI with email + password accounts:
@@ -17,6 +18,7 @@ const ORG_NAME = `E2E Trails ${tag}`;
 const ORG_EMAIL = `e2e-org-${tag}@test.ohviana.dev`;
 const ADMIN_EMAIL = `e2e-admin-${tag}@test.ohviana.dev`;
 const PASSWORD = `Trek-${tag}-pass!`;
+const GUEST_PHONE = testPhone();
 
 test.skip(!PASSWORD_AUTH, 'Requires NEXT_PUBLIC_AUTH_MODE=password');
 // The operator console is a desktop tool; the phone project covers customer journeys.
@@ -35,7 +37,10 @@ test.beforeAll(async () => {
   const { user } = (await res.json()) as { user: { id: string } };
   await sql`insert into platform_admins (user_id) values (${user.id}) on conflict do nothing`;
 });
-test.afterAll(removeWalkthroughData);
+test.afterAll(async () => {
+  await removeWalkthroughData();
+  await removePhoneSignIns([GUEST_PHONE.e164]);
+});
 
 async function openAuth(page: Page, tab: 'Sign in' | 'Create account') {
   await page.goto('/login?next=/dashboard');
@@ -146,7 +151,7 @@ test('organizer + admin walkthrough, end to end', async ({ page }) => {
   const shareUrl = await page.getByLabel('Booking link').inputValue();
   expect(shareUrl).toMatch(/\/b\/[A-Za-z0-9_-]{32}$/);
 
-  // 6. A guest books through the link (signed out).
+  // 6. A customer books through the link (signed out: the SMS code signs them in).
   await signOut(page);
   await page.goto(shareUrl);
   await expect(page.getByText(`You're booking directly with`)).toBeVisible();
@@ -154,9 +159,10 @@ test('organizer + admin walkthrough, end to end', async ({ page }) => {
   await expect(page.locator('.gallery img').first()).toBeVisible();
   await page.getByRole('link', { name: 'Book seats' }).click();
   await page.getByLabel('Full name').fill('Ravi Kumar');
-  await page.getByLabel('Mobile').first().fill('99001 23456');
+  await page.getByLabel('Mobile').first().fill(GUEST_PHONE.typed);
   await page.getByLabel('Traveller 1 name').fill('Ravi Kumar');
   await page.getByRole('button', { name: 'Confirm booking' }).click();
+  await enterPhoneCode(page);
   await page.waitForURL(/\/bookings\/OHV-/);
   await expect(page.getByText("You're booked!")).toBeVisible();
   await expect(page.getByText('TREK PASS')).toBeVisible();

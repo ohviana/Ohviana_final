@@ -1,19 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
-import { buildApp } from '../src/app';
-import { testConfig } from './helpers';
+import { buildApp, type BuildAppOptions } from '../src/app';
+import { createFixtures, createTestKeys, testConfig } from './helpers';
 
 const METRICS_TOKEN = 'metrics-token-for-tests-0123456789';
 const apps: Awaited<ReturnType<typeof buildApp>>[] = [];
+const cleanups: (() => Promise<void>)[] = [];
 
-async function appWith(overrides: Record<string, string>) {
-  const app = await buildApp(testConfig(overrides));
+async function appWith(overrides: Record<string, string>, opts: BuildAppOptions = {}) {
+  const app = await buildApp(testConfig(overrides), opts);
   await app.ready();
   apps.push(app);
   return app;
 }
 
 afterAll(async () => {
+  for (const cleanup of cleanups) await cleanup();
   await Promise.all(apps.map((a) => a.close()));
 });
 
@@ -25,12 +27,12 @@ describe('rate limiting', () => {
         method: 'POST',
         url: '/v1/bookings',
         headers: { 'idempotency-key': randomUUID() },
-        payload: {}, // invalid on purpose: limits apply before validation, nothing is written
+        payload: {}, // anonymous on purpose: limits apply before auth, nothing is written
       });
 
     const codes: number[] = [];
     for (let i = 0; i < 21; i++) codes.push((await attempt()).statusCode);
-    expect(codes.slice(0, 20).every((c) => c === 400)).toBe(true);
+    expect(codes.slice(0, 20).every((c) => c === 401)).toBe(true);
     expect(codes[20]).toBe(429);
 
     const limited = await attempt();
@@ -74,7 +76,11 @@ describe('metrics', () => {
   });
 
   it('exposes request, booking and outbox metrics to the token holder', async () => {
-    const app = await appWith({ METRICS_TOKEN });
+    const keys = await createTestKeys();
+    const app = await appWith({ METRICS_TOKEN }, { verifier: keys.verifier });
+    const fx = createFixtures(app.db);
+    cleanups.push(() => fx.cleanup());
+    const customer = await keys.sign({ sub: await fx.user() });
     expect(
       (
         await app.inject({
@@ -89,7 +95,7 @@ describe('metrics', () => {
     await app.inject({
       method: 'POST',
       url: '/v1/bookings',
-      headers: { 'idempotency-key': randomUUID() },
+      headers: { 'idempotency-key': randomUUID(), authorization: `Bearer ${customer}` },
       payload: {
         batchId: randomUUID(),
         quantity: 1,

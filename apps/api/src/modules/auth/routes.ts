@@ -2,23 +2,48 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { pgConstraintName, userCredentials, users } from '@ohviana/db';
-import { ErrorResponse, SessionResponse, SignInRequest, SignUpRequest } from '@ohviana/contracts';
+import {
+  ErrorResponse,
+  OtpSendRequest,
+  OtpSendResponse,
+  OtpVerifyRequest,
+  SessionResponse,
+  SignInRequest,
+  SignUpRequest,
+} from '@ohviana/contracts';
 import { dummyPasswordHash, hashPassword, verifyPassword } from '../../auth/password';
+import type { OtpSender } from '../../auth/sms';
 import { issueSessionToken } from '../../auth/verifier';
 import { AppError, conflict } from '../../lib/errors';
+import { sendOtp, verifyOtp } from './otp';
 
 const tags = ['auth'];
 const errors = { 400: ErrorResponse, 401: ErrorResponse, 409: ErrorResponse, 429: ErrorResponse };
 /** Slows password guessing per client; legitimate users rarely need more. */
 const AUTH_LIMIT = { max: 10, timeWindow: '1 minute' };
+/** Each send may cost an SMS; per-number limits live in ./otp. */
+const OTP_SEND_LIMIT = { max: 5, timeWindow: '1 minute' };
 
 const invalidCredentials = () => new AppError('UNAUTHENTICATED', 'Email or password is incorrect');
 
+export interface AuthRoutesOptions {
+  secret: string;
+  otpSender: OtpSender;
+  otpDevCode?: string | undefined;
+}
+
 /**
- * Email + password accounts managed by Ohviana (no confirmation emails). Registered only when
- * AUTH_JWT_SECRET is configured.
+ * Accounts managed by Ohviana: email + password (organizers, admins; no confirmation emails)
+ * and phone + SMS code (customers, at checkout). Registered only when AUTH_JWT_SECRET is set.
  */
-export const authRoutes: FastifyPluginAsyncZod<{ secret: string }> = async (app, opts) => {
+export const authRoutes: FastifyPluginAsyncZod<AuthRoutesOptions> = async (app, opts) => {
+  const otp = {
+    db: app.db,
+    sender: opts.otpSender,
+    secret: opts.secret,
+    devCode: opts.otpDevCode,
+  };
+
   app.addHook('onSend', async (_request, reply) => {
     reply.header('cache-control', 'no-store');
   });
@@ -75,7 +100,7 @@ export const authRoutes: FastifyPluginAsyncZod<{ secret: string }> = async (app,
       const session = await issueSessionToken(opts.secret, user);
       return reply.status(201).send({
         ...session,
-        user: { id: user.id, email: user.email ?? email, fullName: user.fullName },
+        user: { id: user.id, email: user.email ?? email, phone: null, fullName: user.fullName },
       });
     },
   );
@@ -97,6 +122,7 @@ export const authRoutes: FastifyPluginAsyncZod<{ secret: string }> = async (app,
         .select({
           id: users.id,
           email: users.email,
+          phone: users.phone,
           fullName: users.fullName,
           passwordHash: userCredentials.passwordHash,
         })
@@ -111,8 +137,39 @@ export const authRoutes: FastifyPluginAsyncZod<{ secret: string }> = async (app,
       const session = await issueSessionToken(opts.secret, row);
       return {
         ...session,
-        user: { id: row.id, email: row.email ?? email, fullName: row.fullName },
+        user: { id: row.id, email: row.email ?? email, phone: row.phone, fullName: row.fullName },
       };
+    },
+  );
+
+  app.post(
+    '/auth/otp/send',
+    {
+      config: { rateLimit: OTP_SEND_LIMIT },
+      schema: {
+        tags,
+        summary: 'Text a 6-digit sign-in code to a mobile number',
+        body: OtpSendRequest,
+        response: { 200: OtpSendResponse, ...errors },
+      },
+    },
+    async (request) => sendOtp(otp, request.body.phone),
+  );
+
+  app.post(
+    '/auth/otp/verify',
+    {
+      config: { rateLimit: AUTH_LIMIT },
+      schema: {
+        tags,
+        summary: 'Sign in with the code (creates the account on first use)',
+        body: OtpVerifyRequest,
+        response: { 200: SessionResponse, ...errors },
+      },
+    },
+    async (request) => {
+      const user = await verifyOtp(otp, request.body.phone, request.body.code);
+      return { ...(await issueSessionToken(opts.secret, user)), user };
     },
   );
 };

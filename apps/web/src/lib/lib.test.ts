@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dateRange, dateTime, price, seatsLabel, todayIst } from './format';
+import { dateRange, dateTime, dateTimeIst, price, seatsLabel, todayIst } from './format';
 import { toE164 } from './phone';
 
 describe('toE164', () => {
@@ -29,6 +29,11 @@ describe('formatting (always IST)', () => {
     // 2026-10-23 19:00 UTC = 24 Oct 00:30 IST
     expect(dateTime('2026-10-23T19:00:00.000Z')).toMatch(/24 Oct/);
     expect(todayIst(new Date('2026-10-23T19:00:00.000Z'))).toBe('2026-10-24');
+  });
+
+  it('labels trek-pass times with the zone they are shown in', () => {
+    // 2026-10-23 16:00 UTC = 9:30 pm IST
+    expect(dateTimeIst('2026-10-23T16:00:00.000Z')).toMatch(/23 Oct, 9:30 pm IST$/);
   });
 
   it('formats ranges across months', () => {
