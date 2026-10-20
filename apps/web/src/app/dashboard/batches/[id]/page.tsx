@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import {
-  DirectLink,
   OrganizerBatch,
   OrganizerBooking,
   OrganizerBookingList,
@@ -16,7 +15,14 @@ import { askReason, Loading, Outcome, StatusBadge } from '@/components/dash/ui';
 import { authedDownload } from '@/lib/authed';
 import { isoToIstLocal, istLocalToIso, paiseToRupees, rupeesToPaise } from '@/lib/datetime';
 import { dateRange, dateTime, price } from '@/lib/format';
-import { shareUrl } from '../../links/share';
+import {
+  AddMembers,
+  BatchName,
+  BookingLink,
+  RepeatBatch,
+  SOURCE_LABELS,
+  TravellerTable,
+} from './BatchTools';
 
 export default function BatchDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -29,12 +35,17 @@ export default function BatchDetailPage() {
     [call, trekId],
   );
   const action = useAction();
-  const [link, setLink] = useState<string | null>(null);
+  const [view, setView] = useState<'travellers' | 'bookings'>('travellers');
 
   if (batch.loading && !batch.data) return <Loading />;
   if (!batch.data) return <Outcome error={batch.error} />;
   const b = batch.data;
   const editable = can('batches:write') && !['cancelled', 'completed', 'ongoing'].includes(b.view);
+  // Members can be added until the trip ends (walk-ins at the bus count too).
+  const canAdd =
+    can('bookings:manage') &&
+    (b.status === 'draft' || b.status === 'published') &&
+    new Date(b.returnAt) > new Date();
 
   const refresh = async () => {
     await Promise.all([batch.reload(), bookings.reload()]);
@@ -57,15 +68,6 @@ export default function BatchDetailPage() {
     }, 'Batch cancelled.');
   };
 
-  const share = () =>
-    action.run(async () => {
-      const created = await call('/direct-links', DirectLink, {
-        method: 'POST',
-        body: { batchId: b.id, label: `${b.trekTitle} ${dateRange(b.departureAt, b.returnAt)}` },
-      });
-      setLink(shareUrl(created.token));
-    });
-
   const cancelBooking = (bk: OrganizerBooking) => {
     const reason = askReason(
       `Cancel booking ${bk.bookingReference}? Give a reason for the customer.`,
@@ -87,14 +89,14 @@ export default function BatchDetailPage() {
           <Link href="/dashboard/batches">← Batches</Link>
         </span>
         <div className="spread">
-          <h1 style={{ margin: 0 }}>
-            {b.trekTitle} · {dateRange(b.departureAt, b.returnAt)}
+          <h1 className="batch-title" style={{ margin: 0 }}>
+            <BatchName name={b.name} />
           </h1>
           <StatusBadge status={b.view} />
         </div>
         <span className="muted">
-          Departs {dateTime(b.departureAt)} · {b.confirmedSeats}/{b.capacity} seats booked ·{' '}
-          {price(b.pricePaise)} per person
+          {b.trekTitle} · {dateRange(b.departureAt, b.returnAt)} · departs {dateTime(b.departureAt)}{' '}
+          · {b.confirmedSeats}/{b.capacity} seats booked · {price(b.pricePaise)} per person
         </span>
         {b.cancelReason && <p className="notice danger small">Cancelled: {b.cancelReason}</p>}
       </div>
@@ -107,11 +109,6 @@ export default function BatchDetailPage() {
         )}
         {b.status === 'draft' && !can('batches:publish') && org.status === 'pending' && (
           <span className="badge warn">Publishing unlocks after approval</span>
-        )}
-        {b.status === 'published' && can('links:write') && (
-          <button type="button" className="secondary" onClick={share} disabled={action.pending}>
-            Create share link
-          </button>
         )}
         {can('bookings:read') && (
           <button
@@ -133,22 +130,14 @@ export default function BatchDetailPage() {
           </button>
         )}
       </div>
-      {b.status === 'draft' && trek.data && trek.data.status !== 'published' && (
+      {b.status === 'draft' && trek.data && !trek.data.catalogTrekId && (
         <p className="notice warn small" style={{ margin: 0 }}>
-          This batch can only be published after its trek is published
-          {trek.data.catalogTrekId ? '' : ' (and the trek needs a catalog trek linked)'}.{' '}
+          Add the trek&apos;s destination before publishing.{' '}
           <Link href={`/dashboard/treks/${trek.data.id}`}>Open “{trek.data.title}”</Link>
         </p>
       )}
-      {link && (
-        <div className="notice ok stack small" style={{ gap: 6 }}>
-          <span>
-            Share this link on WhatsApp or Instagram. Bookings through it carry 0% commission.
-          </span>
-          <input readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
-        </div>
-      )}
       <Outcome error={action.error} message={action.message} />
+      <BookingLink batch={b} onCreated={batch.reload} />
 
       <section className="stack">
         <h2>
@@ -163,79 +152,129 @@ export default function BatchDetailPage() {
         </h2>
         <Outcome error={bookings.error} />
         {bookings.data && bookings.data.items.length === 0 && (
-          <p className="muted">No bookings yet.</p>
+          <p className="muted">
+            No bookings yet.
+            {canAdd && ' People who booked by phone or WhatsApp can be added below.'}
+          </p>
         )}
         {bookings.data && bookings.data.items.length > 0 && (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Reference</th>
-                  <th>Lead contact</th>
-                  <th>Travellers</th>
-                  <th>Pickup</th>
-                  <th>Source</th>
-                  <th>Total</th>
-                  <th>Status</th>
-                  <th aria-label="Actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {bookings.data.items.map((bk) => (
-                  <tr key={bk.bookingReference}>
-                    <td>
-                      <code>{bk.bookingReference}</code>
-                    </td>
-                    <td>
-                      {bk.contact.name}
-                      <div className="muted small">
-                        <a href={`tel:${bk.contact.phone}`}>{bk.contact.phone}</a>
-                      </div>
-                      {bk.emergencyContact && (
-                        <div className="muted small">
-                          SOS: {bk.emergencyContact.name} {bk.emergencyContact.phone}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      {bk.guests.map((g) => g.fullName + (g.age ? ` (${g.age})` : '')).join(', ')}
-                    </td>
-                    <td>{bk.pickup?.name ?? '—'}</td>
-                    <td>
-                      <span className={`badge ${bk.source === 'ORGANIZER_DIRECT' ? 'ok' : ''}`}>
-                        {bk.source === 'ORGANIZER_DIRECT' ? 'Direct' : 'Marketplace'}
-                      </span>
-                    </td>
-                    <td>
-                      {price(bk.totalPaise)}
-                      {bk.commissionPaise > 0 && (
-                        <div className="muted small">commission {price(bk.commissionPaise)}</div>
-                      )}
-                    </td>
-                    <td>
-                      <StatusBadge status={bk.status} />
-                    </td>
-                    <td>
-                      {bk.status === 'confirmed' &&
-                        can('bookings:manage') &&
-                        b.view !== 'completed' && (
-                          <button
-                            type="button"
-                            className="small danger"
-                            onClick={() => cancelBooking(bk)}
-                          >
-                            Cancel
-                          </button>
-                        )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="tabs" role="group" aria-label="Show">
+            <button
+              type="button"
+              aria-pressed={view === 'travellers'}
+              onClick={() => setView('travellers')}
+            >
+              Travellers ({bookings.data.items.reduce((n, bk) => n + bk.guests.length, 0)})
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === 'bookings'}
+              onClick={() => setView('bookings')}
+            >
+              Bookings ({bookings.data.items.length})
+            </button>
           </div>
+        )}
+        {bookings.data && bookings.data.items.length > 0 && view === 'travellers' && (
+          <TravellerTable bookings={bookings.data.items} />
+        )}
+        {bookings.data && bookings.data.items.length > 0 && view === 'bookings' && (
+          <ul className="booking-cards">
+            {bookings.data.items.map((bk) => (
+              <li
+                key={bk.bookingReference}
+                className={`card booking-card${bk.status === 'cancelled' ? ' is-cancelled' : ''}`}
+              >
+                <div className="booking-card-head">
+                  <div className="cluster" style={{ gap: 8 }}>
+                    <code>{bk.bookingReference}</code>
+                    <span className={`badge ${SOURCE_LABELS[bk.source].tone}`}>
+                      {SOURCE_LABELS[bk.source].label}
+                    </span>
+                    <StatusBadge status={bk.status} />
+                  </div>
+                  <div className="cluster" style={{ gap: 12 }}>
+                    <span style={{ textAlign: 'right' }}>
+                      <strong>{price(bk.totalPaise)}</strong>
+                      {bk.commissionPaise > 0 && (
+                        <span className="muted small">
+                          {' '}
+                          · commission {price(bk.commissionPaise)}
+                        </span>
+                      )}
+                    </span>
+                    {bk.status === 'confirmed' &&
+                      can('bookings:manage') &&
+                      b.view !== 'completed' && (
+                        <button
+                          type="button"
+                          className="small danger"
+                          onClick={() => cancelBooking(bk)}
+                        >
+                          Cancel
+                        </button>
+                      )}
+                  </div>
+                </div>
+                <div className="booking-card-body">
+                  <div className="stack" style={{ gap: 4 }}>
+                    <span className="booking-label">Booked by</span>
+                    <strong>{bk.contact.name}</strong>
+                    <a className="small" href={`tel:${bk.contact.phone}`}>
+                      {bk.contact.phone}
+                    </a>
+                    {bk.emergencyContact && (
+                      <span className="muted small">
+                        Emergency: {bk.emergencyContact.name} · {bk.emergencyContact.phone}
+                      </span>
+                    )}
+                  </div>
+                  <div className="stack" style={{ gap: 4 }}>
+                    <span className="booking-label">
+                      {bk.guests.length} traveller{bk.guests.length === 1 ? '' : 's'}
+                    </span>
+                    <ol className="traveller-list">
+                      {bk.guests.map((g, i) => (
+                        <li key={i}>
+                          <span className="t-name">
+                            {g.fullName}
+                            {(g.age || g.gender) && (
+                              <span className="muted small">
+                                {' '}
+                                {[g.age && `${g.age} yrs`, g.gender].filter(Boolean).join(' · ')}
+                              </span>
+                            )}
+                          </span>
+                          <span className="t-phone small">
+                            {g.phone ? (
+                              <a href={`tel:${g.phone}`}>{g.phone}</a>
+                            ) : (
+                              <span className="muted">No phone</span>
+                            )}
+                          </span>
+                          <span className="t-pickup small">
+                            {g.pickup ? (
+                              <>
+                                {g.pickup.name}
+                                <span className="muted"> · {dateTime(g.pickup.pickupAt)}</span>
+                              </>
+                            ) : (
+                              <span className="muted">No pickup</span>
+                            )}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 
+      {canAdd && <AddMembers batch={b} onAdded={refresh} />}
+      {can('batches:write') && <RepeatBatch key={b.id} batch={b} />}
       {editable && <EditBatch batch={b} onSaved={refresh} />}
       {editable && trek.data && <BatchPickups batch={b} trek={trek.data} onSaved={refresh} />}
     </>

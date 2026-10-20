@@ -32,6 +32,7 @@ import {
   PhotoParams,
   UpdateTrekPhotoRequest,
   RegisterOrganizerRequest,
+  RepeatBatchRequest,
   SetBatchPickupsRequest,
   UpdateBatchRequest,
   UpdateMemberRequest,
@@ -41,7 +42,7 @@ import {
 } from '@ohviana/contracts';
 import { PHOTO_CATEGORIES } from '@ohviana/shared';
 import { badRequest } from '../../lib/errors';
-import { requireAuth, requireOrganizer } from '../../plugins/auth';
+import { assertOrgPermission, requireAuth, requireOrganizer } from '../../plugins/auth';
 import { addTrekPhoto, deleteTrekPhoto, updateTrekPhoto } from '../media/service';
 import { LIMITS } from '../../plugins/rate-limit';
 import { listCatalogTreks } from '../catalog/service';
@@ -54,6 +55,7 @@ import {
   getBatch,
   listBatches,
   publishBatch,
+  repeatBatch,
   setBatchPickups,
   updateBatch,
 } from './batches.service';
@@ -309,14 +311,16 @@ export const organizerRoutes: FastifyPluginAsyncZod = async (app) => {
       onRequest: g('treks:write'),
       schema: {
         tags,
-        summary: 'Create a trek template',
+        summary: 'Create a trek with its pickup points and first batch, as draft or published',
         security,
         body: CreateOrganizerTrekRequest,
         response: { 201: OrganizerTrek, ...errors },
       },
     },
-    async (request, reply) =>
-      reply.status(201).send(await createTrek(app.db, org(request), request.body)),
+    async (request, reply) => {
+      if (request.body.publish) assertOrgPermission(requireOrganizer(request), 'batches:publish');
+      return reply.status(201).send(await createTrek(app.db, org(request), request.body));
+    },
   );
 
   app.get(
@@ -619,6 +623,27 @@ export const organizerRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request) => publishBatch(app.db, org(request), request.params.id),
+  );
+
+  app.post(
+    '/batches/:id/repeat',
+    {
+      onRequest: g('batches:write'),
+      schema: {
+        tags,
+        summary: 'Run a batch again on new dates (same price, seats and pickups)',
+        security,
+        params: IdParams,
+        body: RepeatBatchRequest,
+        response: { 201: OrganizerBatch, ...errors },
+      },
+    },
+    async (request, reply) => {
+      if (request.body.publish) assertOrgPermission(requireOrganizer(request), 'batches:publish');
+      return reply
+        .status(201)
+        .send(await repeatBatch(app.db, org(request), request.params.id, request.body));
+    },
   );
 
   app.post(

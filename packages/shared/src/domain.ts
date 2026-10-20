@@ -17,7 +17,11 @@ export type CatalogRequestStatus = (typeof CATALOG_REQUEST_STATUSES)[number];
 export const BATCH_STATUSES = ['draft', 'published', 'cancelled', 'completed'] as const;
 export type BatchStatus = (typeof BATCH_STATUSES)[number];
 
-export const BOOKING_SOURCES = ['MARKETPLACE', 'ORGANIZER_DIRECT'] as const;
+/**
+ * MARKETPLACE: booked on Ohviana. ORGANIZER_DIRECT: through the organizer's own booking link.
+ * ORGANIZER_OFFLINE: added by the organizer (phone/WhatsApp/walk-in). Only MARKETPLACE pays commission.
+ */
+export const BOOKING_SOURCES = ['MARKETPLACE', 'ORGANIZER_DIRECT', 'ORGANIZER_OFFLINE'] as const;
 export type BookingSource = (typeof BOOKING_SOURCES)[number];
 
 /** Payments are out of scope for now: a successful reservation is `confirmed` immediately. */

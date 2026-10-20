@@ -70,6 +70,16 @@ export function requireAuth(request: FastifyRequest): AuthClaims {
   return request.auth;
 }
 
+/** For actions that need an extra permission only in some cases (e.g. "create and publish"). */
+export function assertOrgPermission(ctx: OrganizerContext, permission: OrgPermission): void {
+  if (!roleHasPermission(ctx.role, permission)) {
+    throw forbidden(`Your role (${ctx.role}) cannot perform this action`);
+  }
+  if (!statusAllowsPermission(ctx.status, permission)) {
+    throw forbidden(`This action is not available while the organizer is ${ctx.status}`);
+  }
+}
+
 export function requireOrganizer(request: FastifyRequest): OrganizerContext {
   if (!request.organizer) throw new Error('organizer guard missing on this route');
   return request.organizer;
@@ -163,12 +173,7 @@ export default fp<AuthPluginOptions>(
         }
 
         const ctx = memberships[0]!;
-        if (!roleHasPermission(ctx.role, permission)) {
-          throw forbidden(`Your role (${ctx.role}) cannot perform this action`);
-        }
-        if (!statusAllowsPermission(ctx.status, permission)) {
-          throw forbidden(`This action is not available while the organizer is ${ctx.status}`);
-        }
+        assertOrgPermission(ctx, permission);
         request.organizer = ctx;
       };
 

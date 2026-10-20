@@ -47,6 +47,7 @@ async function fixture(tx: Tx) {
     const [batch] = await tx
       .insert(batches)
       .values({
+        name: `Test_Batch_${randomUUID()}`,
         organizerTrekId: trek!.id,
         organizerId: org!.id,
         departureAt,
@@ -139,7 +140,7 @@ describe('inventory and batch constraints', () => {
       const { a } = await fixture(tx);
       const [second] = await tx
         .insert(batches)
-        .values({ ...a.batch, id: undefined, confirmedSeats: 0 })
+        .values({ ...a.batch, id: undefined, name: `${a.batch.name}_copy`, confirmedSeats: 0 })
         .returning();
       await tx
         .update(batches)

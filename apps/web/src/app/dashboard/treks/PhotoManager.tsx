@@ -10,8 +10,32 @@ import { mediaUrl, PHOTO_CATEGORY_LABELS } from '@/lib/media';
 import { authHeader } from '@/lib/session';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
-const MAX_PHOTOS = 20;
-const MAX_BYTES = 10 * 1024 * 1024;
+export const MAX_PHOTOS = 20;
+export const MAX_BYTES = 10 * 1024 * 1024;
+
+/** Uploads one photo (multipart: category and caption fields must precede the file). */
+export async function uploadTrekPhoto(
+  trekId: string,
+  organizerId: string,
+  file: File,
+  category: PhotoCategory,
+): Promise<OrganizerTrek> {
+  const form = new FormData();
+  form.append('category', category);
+  form.append('caption', '');
+  form.append('file', file);
+  const res = await fetch(`${API_BASE_URL}/v1/organizer/treks/${trekId}/photos`, {
+    method: 'POST',
+    headers: { ...(await authHeader()), 'x-organizer-id': organizerId },
+    body: form,
+  });
+  const body: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    const parsed = ErrorResponse.safeParse(body);
+    throw new Error(parsed.success ? parsed.data.error.message : `Upload failed (${res.status})`);
+  }
+  return OrganizerTrek.parse(body);
+}
 
 /**
  * Trek gallery: upload (drag & drop or pick several), tag each photo (destination, transport,
@@ -34,23 +58,7 @@ export function PhotoManager({
   const [error, setError] = useState<string | null>(null);
   const photos = trek.photos;
 
-  async function uploadOne(file: File): Promise<OrganizerTrek> {
-    const form = new FormData();
-    form.append('category', category);
-    form.append('caption', '');
-    form.append('file', file);
-    const res = await fetch(`${API_BASE_URL}/v1/organizer/treks/${trek.id}/photos`, {
-      method: 'POST',
-      headers: { ...(await authHeader()), 'x-organizer-id': org.organizerId },
-      body: form,
-    });
-    const body: unknown = await res.json().catch(() => null);
-    if (!res.ok) {
-      const parsed = ErrorResponse.safeParse(body);
-      throw new Error(parsed.success ? parsed.data.error.message : `Upload failed (${res.status})`);
-    }
-    return OrganizerTrek.parse(body);
-  }
+  const uploadOne = (file: File) => uploadTrekPhoto(trek.id, org.organizerId, file, category);
 
   async function uploadFiles(list: FileList | File[]) {
     setError(null);

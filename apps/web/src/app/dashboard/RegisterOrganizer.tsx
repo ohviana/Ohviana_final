@@ -50,7 +50,7 @@ export function RegisterOrganizer({
       <div className="stack">
         <h1 style={{ margin: 0 }}>List your treks on Ohviana</h1>
         <p className="muted" style={{ margin: 0 }}>
-          Register your organization. You can set up treks and draft departures right away; they go
+          Register your organization. You can set up treks and draft batches right away; they go
           live once Ohviana approves your account.
         </p>
       </div>

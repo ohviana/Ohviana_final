@@ -5,7 +5,10 @@ import {
   bookingEvents,
   bookings,
   catalogTreks,
+  directLinks,
+  organizers,
   organizerTreks,
+  pgConstraintName,
   pgErrorCode,
   PG_FOREIGN_KEY_VIOLATION,
   pickupPoints,
@@ -18,12 +21,14 @@ import type {
   DashboardSummary,
   OrganizerBatch,
   OrganizerBatchListQuery,
+  RepeatBatchRequest,
   UpdateBatchRequest,
 } from '@ohviana/contracts';
-import { BATCH_VIEWS, deriveBatchView, type BatchView } from '@ohviana/shared';
+import { BATCH_VIEWS, batchName, deriveBatchView, type BatchView } from '@ohviana/shared';
 import { enqueueEvent } from '../../lib/audit';
 import { badRequest, conflict, notFound } from '../../lib/errors';
 import { decodeCursor, toPage } from '../../lib/pagination';
+import { newDirectLinkToken } from './links.service';
 import { getTrekRow } from './treks.service';
 
 type Executor = Database | Tx;
@@ -51,7 +56,7 @@ async function toBatchDtos(
 ): Promise<OrganizerBatch[]> {
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
-  const [titles, pickups] = await Promise.all([
+  const [titles, pickups, links] = await Promise.all([
     db
       .select({ id: organizerTreks.id, title: organizerTreks.title })
       .from(organizerTreks)
@@ -67,12 +72,21 @@ async function toBatchDtos(
       .innerJoin(pickupPoints, eq(pickupPoints.id, batchPickups.pickupPointId))
       .where(inArray(batchPickups.batchId, ids))
       .orderBy(asc(batchPickups.pickupAt)),
+    db
+      .select({ batchId: directLinks.batchId, token: directLinks.token })
+      .from(directLinks)
+      .where(and(inArray(directLinks.batchId, ids), eq(directLinks.active, true)))
+      .orderBy(asc(directLinks.createdAt)),
   ]);
   const titleOf = new Map(titles.map((t) => [t.id, t.title]));
+  // The batch's own booking link: the oldest active one.
+  const linkOf = new Map<string, string>();
+  for (const l of links) if (l.batchId && !linkOf.has(l.batchId)) linkOf.set(l.batchId, l.token);
 
   return rows.map((r) => ({
     id: r.id,
     organizerTrekId: r.organizerTrekId,
+    name: r.name,
     trekTitle: titleOf.get(r.organizerTrekId) ?? '',
     departureAt: r.departureAt.toISOString(),
     returnAt: r.returnAt.toISOString(),
@@ -88,6 +102,7 @@ async function toBatchDtos(
     publishedAt: r.publishedAt?.toISOString() ?? null,
     cancelledAt: r.cancelledAt?.toISOString() ?? null,
     cancelReason: r.cancelReason,
+    bookingLinkToken: linkOf.get(r.id) ?? null,
     pickups: pickups
       .filter((p) => p.batchId === r.id)
       .map((p) => ({
@@ -140,14 +155,14 @@ export async function listBatches(db: Database, organizerId: string, q: Organize
 
 // ---------- Create ----------
 
-interface NewBatch {
+export interface NewBatch {
   departureAt: Date;
   returnAt: Date;
   bookingCutoffAt: Date;
   pickups: { pickupPointId: string; pickupAt: Date }[];
 }
 
-function validateTimes(
+export function validateTimes(
   b: { departureAt: Date; returnAt: Date; bookingCutoffAt: Date },
   now: Date,
   label = '',
@@ -167,7 +182,73 @@ function rethrowPickupError(err: unknown): never {
   throw err;
 }
 
-async function insertBatches(
+// ---------- Names ----------
+
+interface NamingContext {
+  trekId: string;
+  organizer: string;
+  place: string;
+}
+
+/** Names use the destination ("Kudremukh"), falling back to the trek title. */
+async function namingContext(
+  tx: Tx,
+  organizerId: string,
+  trek: { id: string; title: string; catalogTrekId: string | null },
+): Promise<NamingContext> {
+  const [[org], [catalog]] = await Promise.all([
+    tx.select({ name: organizers.name }).from(organizers).where(eq(organizers.id, organizerId)),
+    trek.catalogTrekId
+      ? tx
+          .select({ name: catalogTreks.name })
+          .from(catalogTreks)
+          .where(eq(catalogTreks.id, trek.catalogTrekId))
+      : Promise.resolve([]),
+  ]);
+  return {
+    trekId: trek.id,
+    organizer: org?.name ?? 'Organizer',
+    place: catalog?.name ?? trek.title,
+  };
+}
+
+/**
+ * Inserts a batch named "<Org>_<Place>_<25th>_<Sept>_Batch_<n>", where n follows the trek's
+ * other batches that day. A clash (concurrent create, or a number freed by a deleted draft)
+ * moves on to the next number.
+ */
+async function insertNamed(
+  tx: Tx,
+  ctx: NamingContext,
+  departureAt: Date,
+  values: (name: string) => typeof batches.$inferInsert,
+): Promise<BatchRow> {
+  const istDay = (col: SQL | typeof batches.departureAt) =>
+    sql`(${col} at time zone 'Asia/Kolkata')::date`;
+  const [counted] = await tx
+    .select({ sameDay: sql<number>`count(*)::int` })
+    .from(batches)
+    .where(
+      and(
+        eq(batches.organizerTrekId, ctx.trekId),
+        sql`${istDay(batches.departureAt)} = ${istDay(sql`${departureAt.toISOString()}::timestamptz`)}`,
+      ),
+    );
+  const first = (counted?.sameDay ?? 0) + 1;
+  for (let n = first; ; n++) {
+    const name = batchName({ organizer: ctx.organizer, place: ctx.place, departureAt, n });
+    try {
+      return await tx.transaction(async (sp) => {
+        const [row] = await sp.insert(batches).values(values(name)).returning();
+        return row!;
+      });
+    } catch (err) {
+      if (pgConstraintName(err) !== 'batches_org_name_uq' || n >= first + 50) throw err;
+    }
+  }
+}
+
+export async function insertBatches(
   tx: Tx,
   organizerId: string,
   trekId: string,
@@ -181,13 +262,15 @@ async function insertBatches(
 ): Promise<BatchRow[]> {
   const trek = await getTrekRow(tx, organizerId, trekId);
   if (trek.status === 'archived') throw conflict('Cannot add batches to an archived trek');
+  const naming = await namingContext(tx, organizerId, trek);
 
-  const rows = await tx
-    .insert(batches)
-    .values(
-      items.map((b) => ({
+  const rows: BatchRow[] = [];
+  for (const b of items) {
+    rows.push(
+      await insertNamed(tx, naming, b.departureAt, (name) => ({
         organizerTrekId: trekId,
         organizerId,
+        name,
         departureAt: b.departureAt,
         returnAt: b.returnAt,
         bookingCutoffAt: b.bookingCutoffAt,
@@ -197,8 +280,15 @@ async function insertBatches(
         notes: common.notes ?? null,
         status: 'draft' as const,
       })),
-    )
-    .returning();
+    );
+  }
+
+  // Every batch comes with its one booking link; it opens once the batch is published.
+  if (rows.length) {
+    await tx
+      .insert(directLinks)
+      .values(rows.map((row) => ({ organizerId, batchId: row.id, token: newDirectLinkToken() })));
+  }
 
   const pickupRows = rows.flatMap((row, i) =>
     items[i]!.pickups.map((p) => ({ batchId: row.id, organizerTrekId: trekId, ...p })),
@@ -381,7 +471,13 @@ export async function setBatchPickups(
 // ---------- Lifecycle ----------
 
 export async function publishBatch(db: Database, organizerId: string, batchId: string) {
-  await db.transaction(async (tx) => {
+  await db.transaction((tx) => publishBatchTx(tx, organizerId, batchId));
+  return getBatch(db, organizerId, batchId);
+}
+
+/** Publishes inside the caller's transaction (also used by one-step trek creation). */
+export async function publishBatchTx(tx: Tx, organizerId: string, batchId: string) {
+  {
     const batch = await getBatchRow(tx, organizerId, batchId, true);
     if (batch.status !== 'draft') throw conflict(`Batch is already ${batch.status}`);
     if (batch.bookingCutoffAt <= new Date()) {
@@ -418,8 +514,55 @@ export async function publishBatch(db: Database, organizerId: string, batchId: s
       .update(batches)
       .set({ status: 'published', publishedAt: new Date() })
       .where(eq(batches.id, batchId));
+  }
+}
+
+/**
+ * "Run this batch again": a new batch on new dates with the same price, seats, notes and
+ * pickup points (pickup times keep their offset from departure). Gets its own generated name.
+ */
+export async function repeatBatch(
+  db: Database,
+  organizerId: string,
+  batchId: string,
+  input: RepeatBatchRequest,
+) {
+  const now = new Date();
+  const departureAt = new Date(input.departureAt);
+  const source = await getBatchRow(db, organizerId, batchId);
+  const pickups = await db
+    .select({ pickupPointId: batchPickups.pickupPointId, pickupAt: batchPickups.pickupAt })
+    .from(batchPickups)
+    .where(eq(batchPickups.batchId, batchId));
+  const shift = (d: Date) =>
+    new Date(departureAt.getTime() + (d.getTime() - source.departureAt.getTime()));
+  const item: NewBatch = {
+    departureAt,
+    returnAt: new Date(input.returnAt),
+    // By default keep the source's cutoff lead time (e.g. 12 hours before departure).
+    bookingCutoffAt: input.bookingCutoffAt
+      ? new Date(input.bookingCutoffAt)
+      : shift(source.bookingCutoffAt),
+    pickups: pickups.map((p) => ({ pickupPointId: p.pickupPointId, pickupAt: shift(p.pickupAt) })),
+  };
+  validateTimes(item, now);
+  const id = await db.transaction(async (tx) => {
+    const [created] = await insertBatches(
+      tx,
+      organizerId,
+      source.organizerTrekId,
+      {
+        pricePaise: source.pricePaise,
+        capacity: source.capacity,
+        maxSeatsPerBooking: source.maxSeatsPerBooking,
+        notes: source.notes ?? undefined,
+      },
+      [item],
+    );
+    if (input.publish) await publishBatchTx(tx, organizerId, created!.id);
+    return created!.id;
   });
-  return getBatch(db, organizerId, batchId);
+  return getBatch(db, organizerId, id);
 }
 
 /**
@@ -513,7 +656,7 @@ export async function dashboardSummary(
         seatsSold: sql<number>`coalesce(sum(${bookings.quantity}), 0)::int`,
         grossPaise: sql<number>`coalesce(sum(${bookings.totalPaise}), 0)::bigint`,
         marketplaceGrossPaise: sql<number>`coalesce(sum(${bookings.totalPaise}) filter (where ${bookings.source} = 'MARKETPLACE'), 0)::bigint`,
-        directGrossPaise: sql<number>`coalesce(sum(${bookings.totalPaise}) filter (where ${bookings.source} = 'ORGANIZER_DIRECT'), 0)::bigint`,
+        directGrossPaise: sql<number>`coalesce(sum(${bookings.totalPaise}) filter (where ${bookings.source} <> 'MARKETPLACE'), 0)::bigint`,
         commissionPaise: sql<number>`coalesce(sum(${bookings.commissionPaise}), 0)::bigint`,
       })
       .from(bookings)

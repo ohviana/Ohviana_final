@@ -47,7 +47,22 @@ export function BookingView({
           </>
         )}
         <dt>Travellers</dt>
-        <dd>{b.guests.map((g) => g.fullName).join(', ')}</dd>
+        <dd>
+          <ol className="plain" style={{ margin: 0 }}>
+            {b.guests.map((g, i) => (
+              <li key={i}>
+                {g.fullName}
+                {/* Only worth showing when this traveller boards somewhere else. */}
+                {g.pickup && g.pickup.name !== b.pickup?.name && (
+                  <span className="muted small">
+                    {' '}
+                    · boards at {g.pickup.name}, {dateTime(g.pickup.pickupAt)}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ol>
+        </dd>
         <dt>Total</dt>
         <dd>
           {price(b.totalPaise)}{' '}

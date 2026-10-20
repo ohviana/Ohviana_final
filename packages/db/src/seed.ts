@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { batchName } from '@ohviana/shared';
 import type { Database, Tx } from './client';
 import {
   batchPickups,
@@ -225,6 +226,7 @@ export async function seed(db: Database | Tx, now: Date = new Date()): Promise<S
               id: batchId,
               organizerTrekId: trekId,
               organizerId,
+              name: batchName({ organizer: o.name, place: catalog.name, departureAt, n: 1 }),
               departureAt,
               returnAt: new Date(departureAt.getTime() + 2 * DAY),
               bookingCutoffAt: new Date(departureAt.getTime() - 12 * HOUR),
@@ -245,6 +247,14 @@ export async function seed(db: Database | Tx, now: Date = new Date()): Promise<S
                 pickupAt: new Date(departureAt.getTime() + i * 30 * 60_000),
               })),
             );
+            // Every batch has its own booking link.
+            await tx.insert(directLinks).values({
+              id: seedId(`link:${o.slug}:${catalogSlug}:${week}`),
+              organizerId,
+              batchId,
+              token: seedToken(`batch:${o.slug}:${catalogSlug}:${week}`),
+            });
+            linkCount++;
           }
         }
       }

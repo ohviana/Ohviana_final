@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
-import { useState, type FormEvent } from 'react';
+import { useParams, useSearchParams } from 'next/navigation';
+import { Suspense, useState, type FormEvent } from 'react';
 import { OrganizerBatchArray, OrganizerTrek } from '@ohviana/contracts';
 import { useAction, useLoad } from '@/components/dash/hooks';
 import { useOrg } from '@/components/dash/org-context';
@@ -12,9 +12,20 @@ import { DestinationInput } from '../DestinationInput';
 import { PhotoManager } from '../PhotoManager';
 
 export default function TrekDetailPage() {
+  return (
+    <Suspense fallback={<Loading />}>
+      <TrekDetail />
+    </Suspense>
+  );
+}
+
+function TrekDetail() {
   const { id } = useParams<{ id: string }>();
   const { call, can } = useOrg();
   const trek = useLoad(() => call(`/treks/${id}`, OrganizerTrek), [call, id]);
+  const params = useSearchParams();
+  const created = params.get('created');
+  const photosFailed = Number(params.get('photosFailed') ?? 0);
 
   if (trek.loading && !trek.data) return <Loading />;
   if (!trek.data) return <Outcome error={trek.error} />;
@@ -32,6 +43,19 @@ export default function TrekDetailPage() {
           <StatusBadge status={t.status} />
         </div>
       </div>
+      {created && (
+        <p className="notice ok small" style={{ margin: 0 }}>
+          {created === 'published'
+            ? 'Trek created and its first batch is live — customers can book it now.'
+            : 'Trek saved as draft. Publish its batch from Batches when you are ready.'}{' '}
+          <Link href={`/dashboard/batches?trekId=${t.id}`}>View batches →</Link>
+        </p>
+      )}
+      {photosFailed > 0 && (
+        <p className="notice warn small" style={{ margin: 0 }}>
+          {photosFailed} photo(s) could not be uploaded. Add them again under Photos.
+        </p>
+      )}
       <TrekForm trek={t} writable={writable} onSaved={(x) => trek.setData(x)} />
       <PhotoManager trek={t} writable={writable} onChange={(x) => trek.setData(x)} />
       <Pickups trek={t} writable={writable} onChange={(x) => trek.setData(x)} />
@@ -114,7 +138,7 @@ function TrekForm({
         <span className="small muted">
           {trek.status === 'published'
             ? 'Live on Ohviana'
-            : 'Goes live automatically when you publish a departure'}
+            : 'Goes live automatically when you publish a batch'}
         </span>
       </div>
       <div className="form-grid">
@@ -287,7 +311,7 @@ function Pickups({
   );
 }
 
-/** Creates one departure or a weekly series in a single all-or-nothing request (drafts). */
+/** Creates one batch or a weekly series in a single all-or-nothing request (drafts). */
 function AddBatches({ trek }: { trek: OrganizerTrek }) {
   const { call } = useOrg();
   const action = useAction();
@@ -351,8 +375,8 @@ function AddBatches({ trek }: { trek: OrganizerTrek }) {
     <form onSubmit={submit} className="card stack">
       <h2>Add batches</h2>
       <p className="small muted" style={{ margin: 0 }}>
-        Times are in IST. Set “Repeat weekly” to create the same departure for several weeks; each
-        batch has its own seats.
+        Times are in IST. Set “Repeat weekly” to create the same trip for several weeks; each batch
+        gets its own name, seats and attendee list.
       </p>
       <div className="form-grid">
         <div className="field">

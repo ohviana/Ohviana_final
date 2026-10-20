@@ -15,6 +15,7 @@ import {
 import { BOOKING_SOURCES, BOOKING_STATUSES } from '@ohviana/shared';
 import { createdAt, id, inList, ts, updatedAt } from './_helpers';
 import { batches, batchPickups, directLinks } from './batches';
+import { pickupPoints } from './treks';
 import { users } from './identity';
 
 /** Immutable copy of what the customer agreed to at booking time. */
@@ -30,7 +31,7 @@ export interface BookingPolicySnapshot {
 
 /** How commission was computed, frozen at booking time (never recalculated). */
 export interface CommissionSnapshot {
-  basis: 'MARKETPLACE_AGREED_RATE' | 'ORGANIZER_DIRECT_ZERO';
+  basis: 'MARKETPLACE_AGREED_RATE' | 'ORGANIZER_DIRECT_ZERO' | 'ORGANIZER_OFFLINE_ZERO';
   rateBps: number;
   computedOnPaise: number;
 }
@@ -98,10 +99,11 @@ export const bookings = pgTable(
       sql`${t.commissionPaise} >= 0 and ${t.commissionPaise} <= ${t.totalPaise}
           and ${t.commissionRateBps} between 0 and 10000`,
     ),
-    // PRD: direct bookings carry zero marketplace commission — enforced by the database.
+    // PRD: only marketplace bookings carry commission (direct-link and organizer-added bookings
+    // are zero) — enforced by the database.
     check(
       'bookings_direct_zero_commission_ck',
-      sql`${t.source} <> 'ORGANIZER_DIRECT' or (${t.commissionPaise} = 0 and ${t.commissionRateBps} = 0)`,
+      sql`${t.source} = 'MARKETPLACE' or (${t.commissionPaise} = 0 and ${t.commissionRateBps} = 0)`,
     ),
     check(
       'bookings_direct_link_ck',
@@ -122,9 +124,16 @@ export const bookingGuests = pgTable(
     phone: text('phone'),
     age: integer('age'),
     gender: text('gender'),
+    /** Order travellers were entered in (traveller 1, 2, …). */
+    position: integer('position').notNull().default(0),
+    /** Where this traveller boards (travellers in one booking can board at different stops). */
+    pickupPointId: uuid('pickup_point_id').references(() => pickupPoints.id, {
+      onDelete: 'set null',
+    }),
   },
   (t) => [
     index('booking_guests_booking_idx').on(t.bookingId),
+    index('booking_guests_pickup_idx').on(t.pickupPointId),
     check('booking_guests_age_ck', sql`${t.age} is null or ${t.age} between 1 and 120`),
   ],
 ).enableRLS();

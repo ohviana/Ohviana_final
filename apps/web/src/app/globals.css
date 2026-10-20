@@ -560,15 +560,41 @@ a.card:hover {
   overflow: hidden;
   color: #fff;
   background:
-    radial-gradient(1200px 400px at 80% -10%, rgb(255 214 120 / 0.28), transparent 60%),
+    linear-gradient(
+      100deg,
+      rgb(4 30 19 / 0.92) 0%,
+      rgb(7 61 39 / 0.72) 45%,
+      rgb(7 61 39 / 0.2) 100%
+    ),
+    url('/hero.webp') center 40% / cover,
     linear-gradient(140deg, var(--hero-1) 0%, var(--hero-2) 55%, var(--hero-3) 100%);
+}
+
+.hero-trust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin-top: 18px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: rgb(255 255 255 / 0.9);
+}
+
+.hero-trust span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.hero-trust svg {
+  color: #ffd27a;
 }
 
 .hero .container {
   position: relative;
   z-index: 1;
-  padding-top: 56px;
-  padding-bottom: 120px;
+  padding-top: 72px;
+  padding-bottom: 140px;
 }
 
 .hero h1 {
@@ -683,7 +709,7 @@ a.card:hover {
 
 .trek-card-top {
   position: relative;
-  height: 150px;
+  height: 180px;
   background: linear-gradient(140deg, var(--hero-2), var(--hero-3));
   color: rgb(255 255 255 / 0.9);
   overflow: hidden;
@@ -854,7 +880,11 @@ a.card:hover {
 
 @media (min-width: 760px) {
   .batch-row {
-    grid-template-columns: auto 1.3fr 1fr auto;
+    grid-template-columns: auto minmax(0, 1.1fr) minmax(0, 1.2fr) auto;
+  }
+
+  .batch-row .actions {
+    min-width: 150px;
   }
 
   .batch-row .actions {
@@ -870,10 +900,16 @@ a.card:hover {
 
 .meta-line {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 7px;
   color: var(--muted);
   font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.meta-line > svg {
+  flex-shrink: 0;
+  margin-top: 0.2em;
 }
 
 .verified {
@@ -888,12 +924,15 @@ a.card:hover {
 .kv {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 8px 18px;
+  gap: 10px 18px;
   margin: 0;
+  align-items: baseline;
+  line-height: 1.4;
 }
 
 .kv dt {
   color: var(--muted);
+  font-weight: 500;
 }
 
 .kv dd {
@@ -1320,7 +1359,7 @@ td {
   text-align: left;
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 th {
@@ -1607,4 +1646,374 @@ dd {
 .has-photo {
   background-size: cover !important;
   background-position: center !important;
+}
+
+/* Generated batch names are long single tokens (RCB_Kudremukh_25th_Sept_Batch_1). */
+.batch-name {
+  font-weight: 700;
+  text-decoration: none;
+}
+.batch-name:hover {
+  text-decoration: underline;
+}
+.batch-title {
+  font-size: clamp(1.25rem, 3.5vw, 1.9rem);
+}
+.badge.info {
+  background: color-mix(in srgb, #3b82f6 16%, transparent);
+  color: #3b82f6;
+}
+
+/* ---------- New trek (one form) ---------- */
+.form-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+.pickup-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+.pickup-row > button {
+  justify-self: start;
+}
+.sticky-actions {
+  position: sticky;
+  bottom: 12px;
+  z-index: 5;
+  box-shadow: var(--shadow-lg, 0 10px 30px rgb(0 0 0 / 0.25));
+}
+
+/* ---------- Trip details ---------- */
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 4px;
+  display: grid;
+  gap: 0;
+}
+
+.timeline li {
+  position: relative;
+  padding: 0 0 18px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.timeline li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 5px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.timeline li:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 20px;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+
+.timeline-day {
+  font-size: 0.75rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+
+.info-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+}
+
+.info-grid h3 {
+  margin: 0;
+}
+
+.check-list.off svg {
+  color: var(--danger);
+}
+
+.pickup-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 18px;
+}
+
+.pickup-list li {
+  padding: 14px 0;
+}
+
+.pickup-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.pickup-list .badge {
+  text-transform: none;
+}
+
+.pickup-list svg {
+  color: var(--accent);
+}
+
+.book-box {
+  border-top: 4px solid var(--accent);
+}
+
+/* Filter bar: every control sits on the same baseline. */
+.filter-bar {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  align-items: end;
+}
+
+.check-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  font-weight: 500;
+}
+
+.check-field input {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  accent-color: var(--accent);
+}
+
+/* ---------- Booking link box (organizer) ---------- */
+.link-box {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.link-box input {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 0.85rem;
+  background: var(--surface-2);
+}
+
+.link-box button {
+  flex-shrink: 0;
+}
+
+/* ---------- Organizer: bookings on a batch ---------- */
+.booking-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.booking-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.booking-card.is-cancelled {
+  opacity: 0.6;
+}
+
+.booking-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 18px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.booking-card-body {
+  display: grid;
+  gap: 16px 24px;
+  padding: 16px 18px;
+}
+
+@media (min-width: 900px) {
+  .booking-card-body {
+    grid-template-columns: minmax(0, 0.7fr) minmax(0, 2fr);
+  }
+}
+
+.booking-label {
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.traveller-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: traveller;
+}
+
+.traveller-list li {
+  counter-increment: traveller;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  align-items: center;
+  gap: 2px 12px;
+  padding: 9px 0;
+}
+
+.traveller-list .t-name {
+  font-weight: 650;
+}
+
+.traveller-list .t-phone,
+.traveller-list .t-pickup {
+  grid-column: 2;
+}
+
+@media (min-width: 720px) {
+  .traveller-list li {
+    grid-template-columns: 22px minmax(0, 1.1fr) minmax(0, 0.9fr) minmax(0, 1.3fr);
+  }
+
+  .traveller-list .t-phone,
+  .traveller-list .t-pickup {
+    grid-column: auto;
+  }
+}
+
+.traveller-list li + li {
+  border-top: 1px dashed var(--border);
+}
+
+.traveller-list li::before {
+  content: counter(traveller);
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 800;
+  align-self: center;
+}
+
+.form-subhead {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+/* One traveller per row: number · name · mobile · pickup · remove. */
+.traveller-row {
+  display: grid;
+  gap: 10px 12px;
+  grid-template-columns: 28px 1fr auto;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.traveller-row .field {
+  grid-column: 2 / -1;
+}
+
+.traveller-num {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 800;
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+}
+
+.traveller-row .icon-btn {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: start;
+}
+
+@media (min-width: 760px) {
+  .traveller-row {
+    grid-template-columns: 28px minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.3fr) auto;
+  }
+
+  .traveller-row .field,
+  .traveller-row .icon-btn,
+  .traveller-num {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .traveller-row .icon-btn {
+    align-self: end;
+  }
+
+  .traveller-num {
+    align-self: end;
+    margin-bottom: 10px;
+  }
+}
+
+.icon-btn {
+  min-height: 46px;
+  min-width: 46px;
+  padding: 0;
+}
+
+.traveller-fields + .traveller-fields {
+  border-top: 1px dashed var(--border);
+  padding-top: 14px;
+}
+
+/* Attendee table: same columns as the CSV, one traveller per row. */
+.traveller-table th,
+.traveller-table td {
+  white-space: nowrap;
+  padding: 10px 12px;
+}
+
+.traveller-table tbody tr:hover {
+  background: var(--surface-2);
+}
+
+.traveller-table tr.is-cancelled td {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.traveller-table tr.is-cancelled td:last-child {
+  text-decoration: none;
 }

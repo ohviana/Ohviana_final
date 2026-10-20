@@ -29,6 +29,8 @@ export const batches = pgTable(
     id: id(),
     organizerTrekId: uuid('organizer_trek_id').notNull(),
     organizerId: uuid('organizer_id').notNull(),
+    /** Generated once at creation, e.g. "RCB_Kudremukh_25th_Sept_Batch_1"; never renamed. */
+    name: text('name').notNull(),
     departureAt: ts('departure_at').notNull(),
     returnAt: ts('return_at').notNull(),
     bookingCutoffAt: ts('booking_cutoff_at').notNull(),
@@ -53,6 +55,7 @@ export const batches = pgTable(
     }),
     unique('batches_id_org_uq').on(t.id, t.organizerId),
     unique('batches_id_trek_uq').on(t.id, t.organizerTrekId),
+    uniqueIndex('batches_org_name_uq').on(t.organizerId, t.name),
     index('batches_departure_idx').on(t.status, t.departureAt),
     index('batches_trek_idx').on(t.organizerTrekId, t.departureAt),
     index('batches_org_idx').on(t.organizerId, t.departureAt),

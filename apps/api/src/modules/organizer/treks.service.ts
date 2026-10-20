@@ -25,6 +25,7 @@ import type { z } from 'zod';
 import { enqueueEvent } from '../../lib/audit';
 import { loadTrekPhotos } from '../media/service';
 import { badRequest, conflict, notFound } from '../../lib/errors';
+import { insertBatches, publishBatchTx, validateTimes } from './batches.service';
 
 type Executor = Database | Tx;
 type TrekRow = typeof organizerTreks.$inferSelect;
@@ -293,6 +294,11 @@ function rethrowTrekWriteError(err: unknown, slug?: string): never {
   throw err;
 }
 
+/**
+ * One form, one transaction: the trek, its pickup points and (optionally) its first batch.
+ * With `publish`, the batch goes live at once (which also publishes the trek); without a batch,
+ * `publish` publishes just the trek. Any failure saves nothing.
+ */
 export async function createTrek(
   db: Database,
   organizerId: string,
@@ -300,20 +306,68 @@ export async function createTrek(
 ) {
   const slug = input.slug ?? slugify(input.title);
   if (slug.length < 2) throw badRequest('Could not derive a slug from the title; provide one');
+  const { pickupPoints: pickups = [], firstBatch, publish = false, ...fields } = input;
+  if (publish && !fields.catalogTrekId && !fields.catalogTrekName) {
+    throw badRequest('Add the destination (e.g. Kudremukh) to publish');
+  }
+  const batch = firstBatch && {
+    departureAt: new Date(firstBatch.departureAt),
+    returnAt: new Date(firstBatch.returnAt),
+    bookingCutoffAt: new Date(firstBatch.bookingCutoffAt ?? firstBatch.departureAt),
+  };
+  if (batch) validateTimes(batch, new Date(), 'first batch');
 
   const row = await db.transaction(async (tx) => {
-    const link = await resolveCatalogLink(tx, organizerId, input);
+    const link = await resolveCatalogLink(tx, organizerId, fields);
+    let created: TrekRow;
     try {
-      const [created] = await tx
+      [created] = (await tx
         .insert(organizerTreks)
-        .values({ ...trekColumns(input), ...link, organizerId, slug })
-        .returning();
-      return created!;
+        .values({
+          ...trekColumns(fields),
+          ...link,
+          organizerId,
+          slug,
+          // Publishing goes through the batch below, which publishes the trek too.
+          status: publish && !batch ? 'published' : (fields.status ?? 'draft'),
+        })
+        .returning()) as [TrekRow];
     } catch (err) {
       rethrowTrekWriteError(err, slug);
     }
+
+    const points = pickups.length
+      ? await tx
+          .insert(pickupPoints)
+          .values(
+            pickups.map((p, i) => ({
+              organizerTrekId: created.id,
+              organizerId,
+              name: p.name,
+              landmark: p.landmark ?? null,
+              address: p.address ?? null,
+              mapsUrl: p.mapsUrl ?? null,
+              sortOrder: i,
+            })),
+          )
+          .returning({ id: pickupPoints.id })
+      : [];
+
+    if (firstBatch && batch) {
+      const [b] = await insertBatches(tx, organizerId, created.id, firstBatch, [
+        {
+          ...batch,
+          pickups: points.map((pt, i) => ({
+            pickupPointId: pt.id,
+            pickupAt: pickups[i]!.pickupAt ? new Date(pickups[i]!.pickupAt!) : batch.departureAt,
+          })),
+        },
+      ]);
+      if (publish) await publishBatchTx(tx, organizerId, b!.id);
+    }
+    return created;
   });
-  return (await toTrekDtos(db, [row]))[0]!;
+  return getTrek(db, organizerId, row.id);
 }
 
 export async function updateTrek(

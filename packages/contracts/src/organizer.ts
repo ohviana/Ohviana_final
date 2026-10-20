@@ -158,10 +158,6 @@ const trekFields = {
   status: z.enum(CONTENT_STATUSES),
 };
 
-/** Link a published catalog trek, or a pending catalog request of this organizer. */
-export const CreateOrganizerTrekRequest = z.object(trekFields).partial().required({ title: true });
-export type CreateOrganizerTrekRequest = z.infer<typeof CreateOrganizerTrekRequest>;
-
 export const UpdateOrganizerTrekRequest = z
   .object(trekFields)
   .partial()
@@ -254,6 +250,8 @@ export const BatchPickup = z.object({
 export const OrganizerBatch = z.object({
   id: Uuid,
   organizerTrekId: Uuid,
+  /** Generated, e.g. "RCB_Kudremukh_25th_Sept_Batch_1". */
+  name: z.string(),
   trekTitle: z.string(),
   departureAt: Timestamp,
   returnAt: Timestamp,
@@ -270,6 +268,8 @@ export const OrganizerBatch = z.object({
   publishedAt: Timestamp.nullable(),
   cancelledAt: Timestamp.nullable(),
   cancelReason: z.string().nullable(),
+  /** Token of the batch's booking link (created with the batch); bookings via it are 0% commission. */
+  bookingLinkToken: z.string().nullable(),
   pickups: z.array(BatchPickup),
   createdAt: Timestamp,
   updatedAt: Timestamp,
@@ -346,6 +346,39 @@ export type OrganizerBatchListQuery = z.infer<typeof OrganizerBatchListQuery>;
 export const OrganizerBatchList = paginated(OrganizerBatch);
 export const OrganizerBatchArray = z.object({ items: z.array(OrganizerBatch) });
 
+/** New dates for a copy of an existing batch (price, seats, pickups and notes are reused). */
+export const RepeatBatchRequest = Departure.extend({
+  /** Save as draft (default) or publish straight away. */
+  publish: z.boolean().optional(),
+});
+export type RepeatBatchRequest = z.infer<typeof RepeatBatchRequest>;
+
+// ---------- Create trek (one form) ----------
+
+export const NewTrekPickup = z.object({
+  name: Text(120),
+  landmark: Text(200).optional(),
+  address: Text(300).optional(),
+  mapsUrl: z.url({ protocol: /^https$/ }).optional(),
+  /** Pickup time for the first batch; defaults to its departure time. */
+  pickupAt: InstantInput.optional(),
+});
+
+/**
+ * Everything in one request: trek details, pickup points, and optionally its first batch.
+ * `publish: true` makes the batch (and trek) bookable at once; otherwise all is saved as draft.
+ */
+export const CreateOrganizerTrekRequest = z
+  .object(trekFields)
+  .partial()
+  .required({ title: true })
+  .extend({
+    pickupPoints: z.array(NewTrekPickup).max(20).optional(),
+    firstBatch: Departure.extend(batchCommon).optional(),
+    publish: z.boolean().optional(),
+  });
+export type CreateOrganizerTrekRequest = z.infer<typeof CreateOrganizerTrekRequest>;
+
 // ---------- Direct links ----------
 
 export const DirectLink = z.object({
@@ -378,6 +411,7 @@ export const DashboardSummary = z.object({
     seatsSold: z.number().int(),
     grossPaise: z.number().int(),
     marketplaceGrossPaise: z.number().int(),
+    /** Commission-free: direct-link and organizer-added bookings. */
     directGrossPaise: z.number().int(),
     commissionPaise: z.number().int(),
   }),

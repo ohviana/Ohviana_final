@@ -48,8 +48,10 @@ export function BatchList({ batches, showOrganizer = true, showTrek = false, via
               {showTrek ? b.trek.title : dateRange(b.departureAt, b.returnAt)}
             </span>
             <span className="meta-line">
-              <Icon name="clock" size={14} /> Departs {dateTime(b.departureAt)} ·{' '}
-              {durationLabel(b.departureAt, b.returnAt)}
+              <Icon name="clock" size={14} />
+              <span>
+                Departs {dateTime(b.departureAt)} · {durationLabel(b.departureAt, b.returnAt)}
+              </span>
             </span>
             {showOrganizer && (
               <span className="meta-line">
@@ -60,15 +62,17 @@ export function BatchList({ batches, showOrganizer = true, showTrek = false, via
               </span>
             )}
           </div>
-          <div className="stack small" style={{ gap: 6 }}>
+          <div className="stack small batch-row-extra" style={{ gap: 6 }}>
             {b.pickups.length > 0 && (
               <span className="meta-line">
-                <Icon name="pin" size={14} /> {b.pickups.map((p) => p.name).join(' · ')}
+                <Icon name="pin" size={14} />
+                <span>{b.pickups.map((p) => p.name).join(' · ')}</span>
               </span>
             )}
             {b.trek.inclusions.length > 0 && (
               <span className="meta-line">
-                <Icon name="check" size={14} /> {b.trek.inclusions.slice(0, 3).join(' · ')}
+                <Icon name="check" size={14} />
+                <span>{b.trek.inclusions.slice(0, 3).join(' · ')}</span>
               </span>
             )}
           </div>

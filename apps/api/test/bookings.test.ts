@@ -92,6 +92,7 @@ async function makeBatch(
   const [row] = await app.db
     .insert(batches)
     .values({
+      name: `Test_Batch_${randomUUID()}`,
       organizerTrekId: s.trek.id,
       organizerId: s.org,
       departureAt,
@@ -511,13 +512,13 @@ describe('organizer view', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('text/csv');
     expect(res.headers['content-disposition']).toMatch(
-      /^attachment; filename="attendees-\d{4}-\d{2}-\d{2}-/,
+      /^attachment; filename="Test_Batch_[0-9a-f-]+_attendees\.csv"$/,
     );
     expect(res.body.charCodeAt(0)).toBe(0xfeff); // BOM for Excel
     const CRLF = String.fromCharCode(13, 10);
     const lines = res.body.slice(1).trim().split(CRLF);
     expect(lines).toHaveLength(3);
-    expect(lines[0]).toContain('"Booking reference","Traveller"');
+    expect(lines[0]).toContain('"#","Traveller","Traveller phone"');
     expect(res.body).toContain('"Asha ""Ash"" Rao"');
     expect(res.body).toContain(`"'=HYPERLINK(""evil"")"`);
   });

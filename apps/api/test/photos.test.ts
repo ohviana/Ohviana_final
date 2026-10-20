@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import sharp from 'sharp';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -231,6 +231,7 @@ describe('trek photos', () => {
     const [batch] = await app.db
       .insert(batches)
       .values({
+        name: `Test_Batch_${randomUUID()}`,
         organizerTrekId: s.trek.id,
         organizerId: s.org,
         departureAt,

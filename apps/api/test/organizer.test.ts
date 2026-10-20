@@ -791,7 +791,8 @@ describe('direct links', () => {
 
     const off = await call('POST', `/direct-links/${wide.json().id}/deactivate`, headers);
     expect(off.json().active).toBe(false);
-    expect((await call('GET', '/direct-links', headers)).json().items).toHaveLength(2);
+    // Two made here plus the one every batch gets on create.
+    expect((await call('GET', '/direct-links', headers)).json().items).toHaveLength(3);
   });
 
   it("won't link another organizer's batch", async () => {

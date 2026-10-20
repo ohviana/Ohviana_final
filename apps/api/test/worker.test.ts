@@ -158,6 +158,7 @@ describe('notification handlers', () => {
     const [batch] = await app.db
       .insert(batches)
       .values({
+        name: `Test_Batch_${randomUUID()}`,
         organizerTrekId: trek!.id,
         organizerId: o,
         departureAt,
@@ -240,6 +241,7 @@ describe('maintenance', () => {
       const [b] = await app.db
         .insert(batches)
         .values({
+          name: `Test_Batch_${randomUUID()}`,
           organizerTrekId: trek!.id,
           organizerId: org,
           departureAt,

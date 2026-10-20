@@ -12,7 +12,12 @@ import { authHeader, rememberBookingToken } from '@/lib/session';
 interface Guest {
   fullName: string;
   age: string;
+  phone: string;
+  /** '' = same pickup as the booking. */
+  pickupPointId: string;
 }
+
+const blankGuest = (): Guest => ({ fullName: '', age: '', phone: '', pickupPointId: '' });
 
 interface Props {
   batch: PublicBatch;
@@ -29,7 +34,7 @@ export function CheckoutForm({ batch, via }: Props) {
   );
   const [contact, setContact] = useState({ name: '', phone: '', email: '' });
   const [emergency, setEmergency] = useState({ name: '', phone: '' });
-  const [guests, setGuests] = useState<Guest[]>([{ fullName: '', age: '' }]);
+  const [guests, setGuests] = useState<Guest[]>([blankGuest()]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,7 +46,7 @@ export function CheckoutForm({ batch, via }: Props) {
 
   function setSeats(n: number) {
     setQuantity(n);
-    setGuests((prev) => Array.from({ length: n }, (_, i) => prev[i] ?? { fullName: '', age: '' }));
+    setGuests((prev) => Array.from({ length: n }, (_, i) => prev[i] ?? blankGuest()));
   }
 
   const total = useMemo(() => batch.pricePaise * quantity, [batch.pricePaise, quantity]);
@@ -58,6 +63,10 @@ export function CheckoutForm({ batch, via }: Props) {
     if (emergency.phone && !emergency.name.trim())
       return setError('Add the emergency contact’s name.');
     if (batch.pickups.length > 0 && !pickupPointId) return setError('Choose a pickup point.');
+    const guestPhones = guests.map((g) => (g.phone.trim() ? toE164(g.phone) : null));
+    const badPhone = guests.findIndex((g, i) => g.phone.trim() && !guestPhones[i]);
+    if (badPhone >= 0)
+      return setError(`Enter a valid mobile number for traveller ${badPhone + 1}.`);
 
     const body = {
       batchId: batch.id,
@@ -72,9 +81,11 @@ export function CheckoutForm({ batch, via }: Props) {
       ...(emergencyPhone
         ? { emergencyContact: { name: emergency.name.trim(), phone: emergencyPhone } }
         : {}),
-      guests: guests.map((g) => ({
+      guests: guests.map((g, i) => ({
         fullName: g.fullName.trim(),
         ...(g.age ? { age: Number(g.age) } : {}),
+        ...(guestPhones[i] ? { phone: guestPhones[i] } : {}),
+        ...(g.pickupPointId ? { pickupPointId: g.pickupPointId } : {}),
       })),
     };
     const serialized = JSON.stringify(body);
@@ -215,7 +226,7 @@ export function CheckoutForm({ batch, via }: Props) {
             <span className="step-num">3</span> Travellers
           </legend>
           {guests.map((g, i) => (
-            <div key={i} className="form-grid">
+            <div key={i} className="form-grid traveller-fields">
               <div className="field" style={{ gridColumn: 'span 2' }}>
                 <label htmlFor={`g-${i}`}>Traveller {i + 1} name</label>
                 <input
@@ -247,6 +258,43 @@ export function CheckoutForm({ batch, via }: Props) {
                   }
                 />
               </div>
+              <div className="field">
+                <label htmlFor={`g-phone-${i}`}>
+                  Traveller {i + 1} mobile <span className="hint">(optional)</span>
+                </label>
+                <input
+                  id={`g-phone-${i}`}
+                  inputMode="tel"
+                  placeholder={i === 0 && contact.phone ? contact.phone : '98765 43210'}
+                  value={g.phone}
+                  onChange={(e) =>
+                    setGuests(guests.map((x, j) => (j === i ? { ...x, phone: e.target.value } : x)))
+                  }
+                />
+              </div>
+              {batch.pickups.length > 1 && guests.length > 1 && (
+                <div className="field">
+                  <label htmlFor={`g-pickup-${i}`}>Traveller {i + 1} pickup</label>
+                  <select
+                    id={`g-pickup-${i}`}
+                    value={g.pickupPointId}
+                    onChange={(e) =>
+                      setGuests(
+                        guests.map((x, j) =>
+                          j === i ? { ...x, pickupPointId: e.target.value } : x,
+                        ),
+                      )
+                    }
+                  >
+                    <option value="">Same as booking</option>
+                    {batch.pickups.map((p) => (
+                      <option key={p.pickupPointId} value={p.pickupPointId}>
+                        {p.name} — {dateTime(p.pickupAt)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           ))}
           {guests[0] && !guests[0].fullName && contact.name && (

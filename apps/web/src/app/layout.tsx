@@ -70,7 +70,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <div>
               <h4>For organizers</h4>
               <Link href="/dashboard">List your treks</Link>
-              <Link href="/login">Organizer sign in</Link>
+              <Link href="/login?next=/dashboard">Organizer sign in</Link>
+              <Link href="/dashboard">Organizer dashboard</Link>
             </div>
           </div>
           <div className="footer-bottom">

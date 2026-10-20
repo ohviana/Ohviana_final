@@ -33,11 +33,11 @@ export default function OverviewPage() {
         </div>
         {can('treks:write') && (
           <div className="cluster">
-            <Link href="/dashboard/treks" className="btn secondary">
+            <Link href="/dashboard/treks/new" className="btn secondary">
               <Icon name="mountain" size={16} /> Add a trek
             </Link>
-            <Link href="/dashboard/batches?view=draft" className="btn">
-              <Icon name="calendar" size={16} /> Manage departures
+            <Link href="/dashboard/batches" className="btn">
+              <Icon name="calendar" size={16} /> Manage batches
             </Link>
           </div>
         )}
@@ -51,8 +51,8 @@ export default function OverviewPage() {
           <div className="stack" style={{ gap: 2 }}>
             <strong>Awaiting approval from Ohviana</strong>
             <span className="small">
-              Set up your treks and draft departures now — you can publish them and share booking
-              links as soon as you&apos;re approved.
+              Set up your treks and draft batches now — you can publish them and share booking links
+              as soon as you&apos;re approved.
             </span>
           </div>
         </div>
@@ -102,7 +102,7 @@ export default function OverviewPage() {
                   <Icon name="link" />
                 </span>
                 <strong>{price(summary.data.bookings.directGrossPaise)}</strong>
-                <span className="muted small">Via your direct links (0% commission)</span>
+                <span className="muted small">Your links &amp; added by you (0% commission)</span>
               </div>
               <div className="card stat">
                 <span className="stat-icon">
@@ -122,7 +122,7 @@ export default function OverviewPage() {
           </section>
 
           <section className="stack">
-            <h2 style={{ margin: 0 }}>Departures</h2>
+            <h2 style={{ margin: 0 }}>Batches</h2>
             <div className="stat-grid">
               {VIEWS.map(({ view, label, icon, tone }) => (
                 <Link key={view} href={`/dashboard/batches?view=${view}`} className="card stat">

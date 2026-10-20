@@ -15,6 +15,8 @@ export const BookingGuestInput = z.object({
   phone: PhoneE164.optional(),
   age: z.number().int().min(1).max(120).optional(),
   gender: z.enum(['female', 'male', 'other']).optional(),
+  /** Where this traveller boards; defaults to the booking's pickup point. */
+  pickupPointId: Uuid.optional(),
 });
 
 export const CreateBookingRequest = z
@@ -48,6 +50,8 @@ const BookingGuest = z.object({
   phone: z.string().nullable(),
   age: z.number().int().nullable(),
   gender: z.string().nullable(),
+  /** This traveller's boarding point (their own, else the booking's). */
+  pickup: z.object({ name: z.string(), pickupAt: Timestamp }).nullable(),
 });
 
 const BookingBatch = z.object({
@@ -119,3 +123,25 @@ export const OrganizerBookingList = z.object({
 export const OrganizerCancelBookingRequest = z.object({
   reason: z.string().trim().min(3).max(1000),
 });
+
+/**
+ * The organizer adds people who booked outside Ohviana (phone, WhatsApp, walk-in) to a batch.
+ * Their seats count against capacity like any booking; no commission applies.
+ */
+export const AddBatchMembersRequest = z.object({
+  contact: z.object({
+    name: Name,
+    phone: PhoneE164,
+    email: z
+      .email()
+      .max(254)
+      .transform((e) => e.toLowerCase())
+      .optional(),
+  }),
+  /** One entry per seat, including the contact if they are travelling. */
+  guests: z.array(BookingGuestInput).min(1).max(50),
+  pickupPointId: Uuid.optional(),
+  /** Per-seat price actually charged; defaults to the batch price. */
+  unitPricePaise: z.number().int().min(0).max(100_000_000).optional(),
+});
+export type AddBatchMembersRequest = z.infer<typeof AddBatchMembersRequest>;

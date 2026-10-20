@@ -4,6 +4,7 @@ import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { batches, bookings } from '@ohviana/db';
 import {
+  AddBatchMembersRequest,
   BOOKING_TOKEN_HEADER,
   BookingReferenceParams,
   CancelBookingRequest,
@@ -24,7 +25,7 @@ import { decodeCursor, toPage } from '../../lib/pagination';
 import { requireAuth, requireOrganizer } from '../../plugins/auth';
 import { LIMITS } from '../../plugins/rate-limit';
 import { attendeesCsv } from './csv';
-import { cancelBooking, createBooking, tokenMatches } from './engine';
+import { addBatchMembers, cancelBooking, createBooking, tokenMatches } from './engine';
 import { loadCustomerBookings, loadOrganizerBookings } from './read';
 
 const errors = {
@@ -177,7 +178,7 @@ export const organizerBookingRoutes: FastifyPluginAsyncZod = async (app) => {
 
   async function ownBatch(organizerId: string, batchId: string) {
     const [batch] = await app.db
-      .select({ id: batches.id, departureAt: batches.departureAt })
+      .select({ id: batches.id, name: batches.name, departureAt: batches.departureAt })
       .from(batches)
       .where(and(eq(batches.id, batchId), eq(batches.organizerId, organizerId)));
     if (!batch) throw notFound('Batch');
@@ -212,6 +213,35 @@ export const organizerBookingRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
+  app.post(
+    '/batches/:id/members',
+    {
+      onRequest: g('bookings:manage'),
+      schema: {
+        tags,
+        summary: 'Add people who booked outside Ohviana (phone, WhatsApp, walk-in) to a batch',
+        security,
+        params: IdParams,
+        body: AddBatchMembersRequest,
+        response: { 201: OrganizerBooking, ...errors },
+      },
+    },
+    async (request, reply) => {
+      const { organizerId } = requireOrganizer(request);
+      const reference = await addBatchMembers(app.db, {
+        organizerId,
+        actorId: requireAuth(request).userId,
+        batchId: request.params.id,
+        body: request.body,
+      });
+      const [booking] = await loadOrganizerBookings(
+        app.db,
+        eq(bookings.bookingReference, reference),
+      );
+      return reply.status(201).send(booking!);
+    },
+  );
+
   app.get(
     '/batches/:id/attendees.csv',
     {
@@ -228,12 +258,11 @@ export const organizerBookingRoutes: FastifyPluginAsyncZod = async (app) => {
       const { organizerId } = requireOrganizer(request);
       const batch = await ownBatch(organizerId, request.params.id);
       const items = await loadOrganizerBookings(app.db, eq(bookings.batchId, batch.id));
-      const day = batch.departureAt.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
       return reply
         .header('content-type', 'text/csv; charset=utf-8')
         .header(
           'content-disposition',
-          `attachment; filename="attendees-${day}-${batch.id.slice(0, 8)}.csv"`,
+          `attachment; filename="${batch.name.replace(/[^A-Za-z0-9_-]/g, '')}_attendees.csv"`,
         )
         .send(attendeesCsv(items));
     },

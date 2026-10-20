@@ -28,6 +28,17 @@ export default async function HomePage() {
             Compare dated departures across organizers — price, pickup points, inclusions and seats
             left, side by side.
           </p>
+          <div className="hero-trust">
+            <span>
+              <Icon name="shield" size={16} /> Verified organizers
+            </span>
+            <span>
+              <Icon name="zap" size={16} /> Instant confirmation
+            </span>
+            <span>
+              <Icon name="rupee" size={16} /> No booking fee
+            </span>
+          </div>
         </div>
         <Mountains className="hero-mountains" />
       </section>
@@ -76,9 +87,12 @@ export default async function HomePage() {
               </div>
             ) : (
               <div className="grid-cards">
-                {treks.items.map((t) => (
-                  <TrekCard key={t.id} trek={t} />
-                ))}
+                {/* Treks with photos first: they show customers what to expect. */}
+                {[...treks.items]
+                  .sort((a, b) => Number(!!b.coverPhoto) - Number(!!a.coverPhoto))
+                  .map((t) => (
+                    <TrekCard key={t.id} trek={t} />
+                  ))}
               </div>
             )}
           </section>

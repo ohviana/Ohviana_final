@@ -72,6 +72,20 @@ export default function AccountPage() {
                 : state.me.memberships.map((m) => `${m.name} (${m.role}, ${m.status})`).join(', ')}
             </dd>
           </dl>
+          {(state.me.memberships.length > 0 || state.me.isAdmin) && (
+            <div className="cluster">
+              {state.me.memberships.length > 0 && (
+                <Link href="/dashboard" className="btn">
+                  Organizer dashboard
+                </Link>
+              )}
+              {state.me.isAdmin && (
+                <Link href="/admin" className="btn secondary">
+                  Admin console
+                </Link>
+              )}
+            </div>
+          )}
           {DEV_AUTH ? (
             <p className="small muted" style={{ margin: 0 }}>
               Testing mode: to call the API from the docs page, send the header{' '}

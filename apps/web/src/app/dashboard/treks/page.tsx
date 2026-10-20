@@ -1,33 +1,15 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useState, type FormEvent } from 'react';
-import { OrganizerTrek, OrganizerTrekList } from '@ohviana/contracts';
+import { OrganizerTrekList } from '@ohviana/contracts';
 import { Icon } from '@/components/Icon';
-import { useAction, useLoad } from '@/components/dash/hooks';
+import { useLoad } from '@/components/dash/hooks';
 import { useOrg } from '@/components/dash/org-context';
 import { EmptyState, Loading, Outcome, StatusBadge } from '@/components/dash/ui';
-import { DestinationInput } from './DestinationInput';
 
 export default function TreksPage() {
   const { call, can } = useOrg();
-  const router = useRouter();
   const treks = useLoad(() => call('/treks', OrganizerTrekList), [call]);
-  const action = useAction();
-  const [title, setTitle] = useState('');
-  const [destination, setDestination] = useState('');
-
-  async function create(e: FormEvent) {
-    e.preventDefault();
-    const created = await action.run(() =>
-      call('/treks', OrganizerTrek, {
-        method: 'POST',
-        body: { title: title.trim(), catalogTrekName: destination.trim() },
-      }),
-    );
-    if (created) router.push(`/dashboard/treks/${created.id}`);
-  }
 
   return (
     <>
@@ -36,43 +18,31 @@ export default function TreksPage() {
           <span className="eyebrow">Your offerings</span>
           <h1>Treks</h1>
         </div>
+        {can('treks:write') && (
+          <Link href="/dashboard/treks/new" className="btn">
+            <Icon name="sparkle" size={16} /> New trek
+          </Link>
+        )}
       </div>
       <p className="muted" style={{ margin: 0 }}>
-        A trek holds what stays the same — itinerary, inclusions, pickups and policy. Add dated
-        departures to it, and publish them to start taking bookings.
+        A trek holds what stays the same — itinerary, inclusions, pickups and policy. Each trip on
+        it is a batch with its own dates, seats and attendee list.
       </p>
-
-      {can('treks:write') && (
-        <form onSubmit={create} className="card stack">
-          <h2 className="cluster" style={{ gap: 8, margin: 0 }}>
-            <Icon name="sparkle" /> New trek
-          </h2>
-          <div className="form-grid">
-            <div className="field">
-              <label htmlFor="nt-title">Trek name</label>
-              <input
-                id="nt-title"
-                required
-                minLength={2}
-                placeholder="Kudremukh Weekend Trek"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-              />
-            </div>
-            <DestinationInput value={destination} onChange={setDestination} />
-          </div>
-          <Outcome error={action.error} />
-          <button type="submit" disabled={action.pending} style={{ alignSelf: 'flex-start' }}>
-            Create trek <Icon name="arrowRight" size={16} />
-          </button>
-        </form>
-      )}
 
       <Outcome error={treks.error} />
       {treks.loading && !treks.data && <Loading />}
       {treks.data && treks.data.items.length === 0 && (
         <EmptyState icon="mountain" title="No treks yet">
-          <span className="muted small">Create your first trek above — it takes a minute.</span>
+          <span className="muted small">
+            {can('treks:write') ? (
+              <>
+                <Link href="/dashboard/treks/new">Add your first trek</Link> — one form, takes a
+                couple of minutes.
+              </>
+            ) : (
+              'Your team has not added any treks yet.'
+            )}
+          </span>
         </EmptyState>
       )}
       {treks.data && treks.data.items.length > 0 && (

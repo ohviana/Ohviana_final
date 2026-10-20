@@ -12,6 +12,7 @@ import { EmptyState, Loading, Outcome, StatusBadge } from '@/components/dash/ui'
 import { Icon } from '@/components/Icon';
 import { qs } from '@/lib/api';
 import { dateRange, dateTime, price } from '@/lib/format';
+import { BatchName, CopyLinkButton } from './[id]/BatchTools';
 
 const TAB_ORDER: (BatchView | 'all')[] = [
   'all',
@@ -32,24 +33,25 @@ function BatchesInner() {
   const view = (BATCH_VIEWS as readonly string[]).includes(initial ?? '')
     ? (initial as BatchView)
     : 'all';
+  const trekId = params.get('trekId') ?? undefined;
 
   const [extra, setExtra] = useState<OrganizerBatch[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const list = useLoad(async () => {
     const page = await call(
-      `/batches${qs({ view: view === 'all' ? undefined : view, limit: 50 })}`,
+      `/batches${qs({ view: view === 'all' ? undefined : view, trekId, limit: 50 })}`,
       OrganizerBatchList,
     );
     setExtra([]);
     setCursor(page.nextCursor);
     return page.items;
-  }, [call, view]);
+  }, [call, view, trekId]);
   const action = useAction();
 
   async function more() {
     if (!cursor) return;
     const page = await call(
-      `/batches${qs({ view: view === 'all' ? undefined : view, limit: 50, cursor })}`,
+      `/batches${qs({ view: view === 'all' ? undefined : view, trekId, limit: 50, cursor })}`,
       OrganizerBatchList,
     );
     setExtra((prev) => [...prev, ...page.items]);
@@ -76,12 +78,12 @@ function BatchesInner() {
     <>
       <div className="page-head">
         <div>
-          <span className="eyebrow">Dated departures</span>
-          <h1 style={{ margin: 0 }}>Departures</h1>
+          <span className="eyebrow">Your trips</span>
+          <h1 style={{ margin: 0 }}>Batches</h1>
         </div>
         {can('batches:write') && (
           <Link href="/dashboard/treks" className="btn secondary">
-            <Icon name="calendar" size={16} /> Add departures from a trek
+            <Icon name="calendar" size={16} /> New batch from a trek
           </Link>
         )}
       </div>
@@ -92,22 +94,32 @@ function BatchesInner() {
             key={v}
             type="button"
             aria-pressed={v === view}
-            onClick={() =>
-              router.replace(v === 'all' ? '/dashboard/batches' : `/dashboard/batches?view=${v}`)
-            }
+            onClick={() => {
+              const next = new URLSearchParams({
+                ...(v === 'all' ? {} : { view: v }),
+                ...(trekId ? { trekId } : {}),
+              }).toString();
+              router.replace(next ? `/dashboard/batches?${next}` : '/dashboard/batches');
+            }}
           >
             {v === 'all' ? 'All' : v.replace(/_/g, ' ')}
           </button>
         ))}
       </div>
 
+      {trekId && (
+        <p className="small" style={{ margin: 0 }}>
+          Showing one trek&apos;s batches · <Link href="/dashboard/batches">Show all</Link>
+        </p>
+      )}
       <Outcome error={action.error ?? list.error} message={action.message} />
       {list.loading && !list.data ? (
         <Loading />
       ) : rows.length === 0 ? (
-        <EmptyState icon="calendar" title="No departures here">
+        <EmptyState icon="calendar" title="No batches here">
           <span className="muted small">
-            Open a trek and use <strong>Add batches</strong> to create one or a weekly series.
+            Open a trek and use <strong>Add batches</strong>, or open a past batch and use{' '}
+            <strong>Run this batch again</strong>.
           </span>
         </EmptyState>
       ) : (
@@ -115,7 +127,7 @@ function BatchesInner() {
           <table>
             <thead>
               <tr>
-                <th>Dates</th>
+                <th>Batch</th>
                 <th>Trek</th>
                 <th>Price</th>
                 <th>Seats</th>
@@ -127,10 +139,12 @@ function BatchesInner() {
               {rows.map((b) => (
                 <tr key={b.id}>
                   <td>
-                    <Link href={`/dashboard/batches/${b.id}`}>
-                      {dateRange(b.departureAt, b.returnAt)}
+                    <Link href={`/dashboard/batches/${b.id}`} className="batch-name">
+                      <BatchName name={b.name} />
                     </Link>
-                    <div className="muted small">{dateTime(b.departureAt)}</div>
+                    <div className="muted small">
+                      {dateRange(b.departureAt, b.returnAt)} · departs {dateTime(b.departureAt)}
+                    </div>
                   </td>
                   <td>{b.trekTitle}</td>
                   <td>{price(b.pricePaise)}</td>
@@ -141,7 +155,13 @@ function BatchesInner() {
                     <StatusBadge status={b.view} />
                   </td>
                   <td>
-                    <div className="cluster">
+                    <div
+                      className="cluster"
+                      style={{ flexWrap: 'nowrap', justifyContent: 'flex-end' }}
+                    >
+                      {b.status === 'published' && b.bookingLinkToken && (
+                        <CopyLinkButton token={b.bookingLinkToken} />
+                      )}
                       {b.status === 'draft' && can('batches:publish') && (
                         <button
                           type="button"

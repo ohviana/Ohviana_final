@@ -73,12 +73,6 @@ export default async function TrekPage({
   });
 
   const a = trek.availability;
-  const facts = [
-    trek.district && ['District', trek.district],
-    trek.state && ['State', trek.state],
-    trek.difficulty && ['Difficulty', trek.difficulty],
-    trek.maxAltitudeM && ['Highest point', `${trek.maxAltitudeM.toLocaleString('en-IN')} m`],
-  ].filter(Boolean) as [string, string][];
 
   return (
     <>
@@ -139,7 +133,14 @@ export default async function TrekPage({
       </section>
 
       <div className="container stack-lg" style={{ paddingTop: 8 }}>
-        <div className="two-col">
+        {/* Location, difficulty and altitude are in the banner; departures get the full width. */}
+        {trek.description && (
+          <section className="card stack">
+            <h2 style={{ margin: 0 }}>About this trek</h2>
+            <p style={{ whiteSpace: 'pre-line', margin: 0 }}>{trek.description}</p>
+          </section>
+        )}
+        <div>
           <section className="stack" aria-labelledby="departures">
             <h2 id="departures">Compare departures</h2>
             <BatchFilters
@@ -181,27 +182,6 @@ export default async function TrekPage({
                 </>
               ))}
           </section>
-
-          <aside className="card stack sticky">
-            <h2>About this trek</h2>
-            {facts.length > 0 && (
-              <dl className="kv">
-                {facts.map(([k, v]) => (
-                  <div key={k} style={{ display: 'contents' }}>
-                    <dt>{k}</dt>
-                    <dd style={{ textTransform: k === 'Difficulty' ? 'capitalize' : undefined }}>
-                      {v}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-            {trek.description && (
-              <p className="small" style={{ whiteSpace: 'pre-line', margin: 0 }}>
-                {trek.description}
-              </p>
-            )}
-          </aside>
         </div>
       </div>
     </>

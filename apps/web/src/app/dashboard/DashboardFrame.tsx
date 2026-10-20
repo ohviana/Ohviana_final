@@ -14,9 +14,8 @@ const ACTIVE_ORG_KEY = 'ohviana:active-organizer';
 
 const NAV: NavItem[] = [
   { href: '/dashboard', label: 'Overview', icon: 'grid' },
-  { href: '/dashboard/batches', label: 'Departures', icon: 'calendar' },
+  { href: '/dashboard/batches', label: 'Batches', icon: 'calendar' },
   { href: '/dashboard/treks', label: 'Treks', icon: 'mountain' },
-  { href: '/dashboard/links', label: 'Booking links', icon: 'link' },
   { href: '/dashboard/team', label: 'Team', icon: 'users' },
   { href: '/dashboard/profile', label: 'Profile', icon: 'building' },
 ];
@@ -119,8 +118,8 @@ function OrganizerLanding() {
           </span>
           <h1 style={{ color: '#fff', margin: 0 }}>Grow your trek business with Ohviana</h1>
           <p>
-            List your treks, publish dated departures, and get bookings from new trekkers — plus
-            your own commission-free booking links for WhatsApp and Instagram.
+            List your treks, publish batches, and get bookings from new trekkers — plus your own
+            commission-free booking links for WhatsApp and Instagram.
           </p>
           <div className="cluster" style={{ marginTop: 8 }}>
             <Link href="/login?mode=signup&next=/dashboard" className="btn sun">
@@ -136,13 +135,13 @@ function OrganizerLanding() {
         {[
           {
             icon: 'calendar' as const,
-            title: 'Weekly departures in one go',
-            text: 'Create a whole season of departures at once, each with its own seats.',
+            title: 'Weekly batches in one go',
+            text: 'Create a whole season of batches at once, or repeat one in a click.',
           },
           {
             icon: 'link' as const,
             title: '0% on your own customers',
-            text: 'Share direct booking links — those bookings carry no marketplace commission.',
+            text: 'Every batch gets its own booking link — those bookings carry no commission.',
           },
           {
             icon: 'download' as const,

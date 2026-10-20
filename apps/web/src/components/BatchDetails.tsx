@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { PublicBatch } from '@ohviana/contracts';
 import { dateTime, durationLabel, longDate, price, seatsLabel } from '@/lib/format';
+import { Icon } from './Icon';
 import { PhotoGallery } from './PhotoGallery';
 
 /** Everything a customer needs to decide: itinerary, inclusions, pickups, policy. */
@@ -27,10 +28,11 @@ export function BatchDetails({ batch, via }: { batch: PublicBatch; via?: string 
         {t.itinerary.length > 0 && (
           <section className="stack">
             <h2>Itinerary</h2>
-            <ol className="plain stack" style={{ gap: 8 }}>
+            <ol className="timeline">
               {t.itinerary.map((d) => (
                 <li key={d.day}>
-                  <strong>Day {d.day}:</strong> {d.title}
+                  <span className="timeline-day">Day {d.day}</span>
+                  <strong>{d.title}</strong>
                   {d.details && <div className="muted small">{d.details}</div>}
                 </li>
               ))}
@@ -38,13 +40,15 @@ export function BatchDetails({ batch, via }: { batch: PublicBatch; via?: string 
           </section>
         )}
 
-        <section className="grid-cards">
+        <section className="info-grid">
           {t.inclusions.length > 0 && (
             <div className="card stack">
               <h3>Included</h3>
-              <ul className="plain small">
+              <ul className="check-list small">
                 {t.inclusions.map((x) => (
-                  <li key={x}>{x}</li>
+                  <li key={x}>
+                    <Icon name="check" size={14} /> {x}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -52,9 +56,11 @@ export function BatchDetails({ batch, via }: { batch: PublicBatch; via?: string 
           {t.exclusions.length > 0 && (
             <div className="card stack">
               <h3>Not included</h3>
-              <ul className="plain small">
+              <ul className="check-list small off">
                 {t.exclusions.map((x) => (
-                  <li key={x}>{x}</li>
+                  <li key={x}>
+                    <Icon name="x" size={14} /> {x}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -62,9 +68,11 @@ export function BatchDetails({ batch, via }: { batch: PublicBatch; via?: string 
           {t.thingsToCarry.length > 0 && (
             <div className="card stack">
               <h3>Things to carry</h3>
-              <ul className="plain small">
+              <ul className="check-list small">
                 {t.thingsToCarry.map((x) => (
-                  <li key={x}>{x}</li>
+                  <li key={x}>
+                    <Icon name="check" size={14} /> {x}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -74,11 +82,13 @@ export function BatchDetails({ batch, via }: { batch: PublicBatch; via?: string 
         {batch.pickups.length > 0 && (
           <section className="stack">
             <h2>Pickup points</h2>
-            <ul className="batch-list">
+            <ul className="card pickup-list">
               {batch.pickups.map((p) => (
-                <li key={p.pickupPointId} className="card spread">
+                <li key={p.pickupPointId} className="spread">
                   <div className="stack" style={{ gap: 2 }}>
-                    <strong>{p.name}</strong>
+                    <strong className="cluster" style={{ gap: 6 }}>
+                      <Icon name="pin" size={15} /> {p.name}
+                    </strong>
                     {(p.landmark || p.address) && (
                       <span className="muted small">
                         {[p.landmark, p.address].filter(Boolean).join(' · ')}
@@ -86,7 +96,7 @@ export function BatchDetails({ batch, via }: { batch: PublicBatch; via?: string 
                     )}
                   </div>
                   <div className="cluster small">
-                    <span>{dateTime(p.pickupAt)}</span>
+                    <span className="badge">{dateTime(p.pickupAt)}</span>
                     {p.mapsUrl && (
                       <a href={p.mapsUrl} target="_blank" rel="noopener noreferrer">
                         Map
@@ -107,7 +117,7 @@ export function BatchDetails({ batch, via }: { batch: PublicBatch; via?: string 
         </section>
       </div>
 
-      <aside className="card stack sticky">
+      <aside className="card stack sticky book-box">
         <span className="price">
           {price(batch.pricePaise)}
           <small> /person</small>

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import {
   batchPickups,
   batches,
@@ -46,17 +46,45 @@ function bookingQuery(db: Executor) {
 
 type Row = Awaited<ReturnType<ReturnType<typeof bookingQuery>['where']>>[number];
 
+/** Travellers with their own boarding point (falling back to the booking's), in booking order. */
 async function guestsFor(db: Executor, bookingIds: string[]) {
   if (bookingIds.length === 0) return new Map<string, CustomerBooking['guests']>();
+  const pickupId = sql`coalesce(${bookingGuests.pickupPointId}, ${bookings.pickupPointId})`;
   const rows = await db
-    .select()
+    .select({
+      bookingId: bookingGuests.bookingId,
+      fullName: bookingGuests.fullName,
+      phone: bookingGuests.phone,
+      age: bookingGuests.age,
+      gender: bookingGuests.gender,
+      pickupName: pickupPoints.name,
+      pickupAt: batchPickups.pickupAt,
+    })
     .from(bookingGuests)
+    .innerJoin(bookings, eq(bookings.id, bookingGuests.bookingId))
+    .leftJoin(
+      batchPickups,
+      and(
+        eq(batchPickups.batchId, bookings.batchId),
+        sql`${batchPickups.pickupPointId} = ${pickupId}`,
+      ),
+    )
+    .leftJoin(pickupPoints, sql`${pickupPoints.id} = ${pickupId}`)
     .where(inArray(bookingGuests.bookingId, bookingIds))
-    .orderBy(asc(bookingGuests.fullName));
+    .orderBy(asc(bookingGuests.position), asc(bookingGuests.fullName));
   const map = new Map<string, CustomerBooking['guests']>();
   for (const g of rows) {
     const list = map.get(g.bookingId) ?? [];
-    list.push({ fullName: g.fullName, phone: g.phone, age: g.age, gender: g.gender });
+    list.push({
+      fullName: g.fullName,
+      phone: g.phone,
+      age: g.age,
+      gender: g.gender,
+      pickup:
+        g.pickupName && g.pickupAt
+          ? { name: g.pickupName, pickupAt: g.pickupAt.toISOString() }
+          : null,
+    });
     map.set(g.bookingId, list);
   }
   return map;

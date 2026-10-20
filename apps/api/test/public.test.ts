@@ -59,6 +59,7 @@ async function batch(
   const [row] = await app.db
     .insert(batches)
     .values({
+      name: `Test_Batch_${randomUUID()}`,
       organizerTrekId: trek.id,
       organizerId: trek.organizerId,
       departureAt,
@@ -232,6 +233,7 @@ describe('date windows (IST calendar days)', () => {
     const [early] = await app.db
       .insert(batches)
       .values({
+        name: `Test_Batch_${randomUUID()}`,
         organizerTrekId: t.id,
         organizerId: org,
         departureAt,

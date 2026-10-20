@@ -12,7 +12,7 @@ interface Props {
 export function BatchFilters({ action, from, to, sort, includeUnavailable }: Props) {
   const min = todayIst();
   return (
-    <form action={action} method="get" className="form-grid card">
+    <form action={action} method="get" className="card filter-bar">
       <div className="field">
         <label htmlFor="bf-from">From</label>
         <input id="bf-from" type="date" name="from" min={min} defaultValue={from} />
@@ -28,13 +28,12 @@ export function BatchFilters({ action, from, to, sort, includeUnavailable }: Pro
           <option value="price_asc">Lowest price first</option>
         </select>
       </div>
-      <label className="cluster" style={{ fontWeight: 400, minHeight: 44 }}>
+      <label className="check-field">
         <input
           type="checkbox"
           name="includeUnavailable"
           value="true"
           defaultChecked={includeUnavailable}
-          style={{ width: 'auto', minHeight: 0 }}
         />
         Show sold out
       </label>
