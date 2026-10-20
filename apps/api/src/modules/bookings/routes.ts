@@ -1,8 +1,8 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { batches, bookings } from '@ohviana/db';
+import { batches, bookings, users } from '@ohviana/db';
 import {
   AddBatchMembersRequest,
   BOOKING_TOKEN_HEADER,
@@ -59,7 +59,7 @@ async function authorizedBooking(
   return found;
 }
 
-/** Customer-facing booking API (guest checkout supported). */
+/** Customer-facing booking API. Viewing works for the owner or with the booking's token. */
 export const bookingRoutes: FastifyPluginAsyncZod = async (app) => {
   // Bookings carry personal data: never cache.
   app.addHook('onSend', async (_request, reply) => {
@@ -69,20 +69,24 @@ export const bookingRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     '/bookings',
     {
+      // Customers sign in with a phone code at checkout; the booking belongs to that account.
+      onRequest: app.guards.user,
       config: { rateLimit: LIMITS.booking },
       schema: {
         tags: ['bookings'],
-        summary: 'Book seats (guest or signed in). Requires an Idempotency-Key header.',
+        summary: 'Book seats (signed in). Requires an Idempotency-Key header.',
+        security: [{ bearerAuth: [] }],
         headers: z.object({ [IDEMPOTENCY_HEADER]: z.string().min(16).max(128) }),
         body: CreateBookingRequest,
         response: { 201: CreateBookingResponse, ...errors },
       },
     },
     async (request, reply) => {
+      const { userId } = requireAuth(request);
       let result: Awaited<ReturnType<typeof createBooking>>;
       try {
         result = await createBooking(app.db, {
-          userId: request.auth?.userId ?? null,
+          userId,
           idempotencyKey: request.headers[IDEMPOTENCY_HEADER],
           body: request.body,
         });
@@ -91,7 +95,14 @@ export const bookingRoutes: FastifyPluginAsyncZod = async (app) => {
           app.metrics.bookingsRejected.inc({ reason: err.code.toLowerCase() });
         throw err;
       }
-      if (!result.replayed) app.metrics.bookingsCreated.inc({ source: result.body.source });
+      if (!result.replayed) {
+        app.metrics.bookingsCreated.inc({ source: result.body.source });
+        // Phone sign-in creates nameless accounts: the first booking names them.
+        await app.db
+          .update(users)
+          .set({ fullName: request.body.contact.name })
+          .where(and(eq(users.id, userId), isNull(users.fullName)));
+      }
       return reply
         .status(result.status)
         .header('idempotent-replayed', String(result.replayed))

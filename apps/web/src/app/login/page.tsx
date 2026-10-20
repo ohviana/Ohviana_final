@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { Suspense, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { BrandMark } from '@/components/BrandMark';
 import { Icon } from '@/components/Icon';
 import { ApiError } from '@/lib/api';
 import { AUTH_MODE, setDevUser, signInWithPassword, signUpWithPassword } from '@/lib/session';
@@ -33,12 +34,7 @@ function AuthSide() {
   return (
     <aside className="auth-side">
       <span className="brand" style={{ color: '#fff' }}>
-        <span
-          className="brand-mark"
-          style={{ background: 'rgb(255 255 255 / 0.18)', boxShadow: 'none' }}
-        >
-          <Icon name="mountain" size={20} />
-        </span>
+        <BrandMark />
         Ohviana
       </span>
       <h2 style={{ color: '#fff', fontSize: '1.7rem', margin: 0 }}>

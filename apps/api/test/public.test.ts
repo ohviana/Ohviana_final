@@ -216,6 +216,41 @@ describe('comparing departures of a trek', () => {
   });
 });
 
+describe('departure days of a trek', () => {
+  it('summarises each IST day across organizers, including sold-out and closed days', async () => {
+    const res = await get(`/v1/treks/${w.alpha.slug}/dates`);
+    expect(res.statusCode).toBe(200);
+    const byDay = new Map(
+      (res.json().items as { date: string; departureCount: number }[]).map(
+        (d) => [d.date, d] as const,
+      ),
+    );
+    expect(byDay.get(istDay(w.b.org2Alpha.departureAt))).toMatchObject({
+      departureCount: 1,
+      organizerCount: 1,
+      bookable: true,
+      minPricePaise: 250_000,
+      seatsLeft: 10,
+    });
+    expect(byDay.get(istDay(w.b.soldOut.departureAt))).toMatchObject({
+      bookable: false,
+      minPricePaise: null,
+      seatsLeft: 0,
+    });
+    expect(byDay.get(istDay(w.b.closed.departureAt))).toMatchObject({ bookable: false });
+    // Hidden departures (draft, pending/suspended organizer, draft template, cancelled) never count.
+    const total = [...byDay.values()].reduce((n, d) => n + d.departureCount, 0);
+    expect(total).toBe(4);
+    const days = [...byDay.keys()];
+    expect(days).toEqual([...days].sort());
+  });
+
+  it('is 404 for unknown or unpublished treks', async () => {
+    expect((await get(`/v1/treks/${w.draftCatalog.slug}/dates`)).statusCode).toBe(404);
+    expect((await get('/v1/treks/no-such-trek/dates')).statusCode).toBe(404);
+  });
+});
+
 describe('date windows (IST calendar days)', () => {
   it('filters by departure day', async () => {
     const day = istDay(w.b.org2Alpha.departureAt);

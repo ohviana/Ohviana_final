@@ -73,3 +73,12 @@ export async function removeWalkthroughData(): Promise<void> {
   await sql`delete from admin_audit_log where actor_id in (select id from users where email like 'e2e-%@test.ohviana.dev')`;
   await sql`delete from users where email like 'e2e-%@test.ohviana.dev'`;
 }
+
+/** Removes the sign-in codes and phone-only accounts that checkout created for these numbers. */
+export async function removePhoneSignIns(phones: string[]): Promise<void> {
+  if (phones.length === 0) return;
+  await sql`delete from phone_otps where phone = any(${phones})`;
+  await sql`
+    delete from users u where u.phone = any(${phones}) and u.email is null
+      and not exists (select 1 from bookings k where k.user_id = u.id)`;
+}

@@ -9,7 +9,7 @@ import { apiFetch, qs } from '@/lib/api';
 export const revalidate = 60;
 
 export default async function HomePage() {
-  const treks = await apiFetch('/v1/treks?limit=6', PublicTrekList, {
+  const treks = await apiFetch('/v1/treks?limit=3', PublicTrekList, {
     next: { revalidate: 60 },
   }).catch(() => null);
   const weekend = thisWeekend();
@@ -22,11 +22,11 @@ export default async function HomePage() {
             <Icon name="shield" size={14} /> Verified trek organizers only
           </span>
           <h1 style={{ marginTop: 16 }}>
-            Find your next <em>weekend trek</em> and book in minutes
+            Find a <em>trek</em>, book in minutes
           </h1>
           <p className="lead">
-            Compare dated departures across organizers — price, pickup points, inclusions and seats
-            left, side by side.
+            First trek or fiftieth — pick a date that suits you, see the price, pickup points and
+            what’s included, and reserve your seats.
           </p>
           <div className="hero-trust">
             <span>
@@ -34,9 +34,6 @@ export default async function HomePage() {
             </span>
             <span>
               <Icon name="zap" size={16} /> Instant confirmation
-            </span>
-            <span>
-              <Icon name="rupee" size={16} /> No booking fee
             </span>
           </div>
         </div>
@@ -95,49 +92,6 @@ export default async function HomePage() {
                   ))}
               </div>
             )}
-          </section>
-
-          <section className="stack">
-            <div>
-              <span className="eyebrow">How it works</span>
-              <h2>Booking a trek, the easy way</h2>
-            </div>
-            <div className="grid-cards">
-              <div className="card feature">
-                <span className="icon-circle">
-                  <Icon name="search" size={22} />
-                </span>
-                <div>
-                  <h3>Search &amp; compare</h3>
-                  <p className="muted small" style={{ margin: 0 }}>
-                    See every departure for a trek — dates, prices, pickups and what&apos;s
-                    included.
-                  </p>
-                </div>
-              </div>
-              <div className="card feature">
-                <span className="icon-circle sun">
-                  <Icon name="ticket" size={22} />
-                </span>
-                <div>
-                  <h3>Book your seats</h3>
-                  <p className="muted small" style={{ margin: 0 }}>
-                    Pick your pickup point, add travellers and confirm — no account needed.
-                  </p>
-                </div>
-              </div>
-              <div className="card feature">
-                <span className="icon-circle">
-                  <Icon name="zap" size={22} />
-                </span>
-                <div>
-                  <h3>Instant confirmation</h3>
-                  <p className="muted small" style={{ margin: 0 }}>
-                    Seats are held the moment you book. Get your trek pass with a booking reference.
-                  </p>
-                </div>
-              </div>
-            </div>
           </section>
 
           <section className="cta-band">

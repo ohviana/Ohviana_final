@@ -26,6 +26,14 @@ export function dateTime(iso: string): string {
   });
 }
 
+/**
+ * "Fri, 23 Oct, 9:30 pm IST": for times people act on (departure, pickup) on the trek pass,
+ * which gets screenshotted and shared, sometimes with people outside India.
+ */
+export function dateTimeIst(iso: string): string {
+  return `${dateTime(iso)} IST`;
+}
+
 /** "Fri, 23 Oct 2026" */
 export function longDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-IN', {

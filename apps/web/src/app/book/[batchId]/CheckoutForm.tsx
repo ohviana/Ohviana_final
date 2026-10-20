@@ -2,12 +2,19 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useRef, useState, type FormEvent } from 'react';
-import { CreateBookingResponse, type PublicBatch } from '@ohviana/contracts';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import {
+  CreateBookingResponse,
+  MeResponse,
+  MyBookingList,
+  type PublicBatch,
+} from '@ohviana/contracts';
+import { PhoneCodeEntry } from '@/components/PhoneCodeEntry';
 import { ApiError, apiFetch } from '@/lib/api';
+import { authedFetch } from '@/lib/authed';
 import { dateRange, dateTime, price } from '@/lib/format';
 import { toE164 } from '@/lib/phone';
-import { authHeader, rememberBookingToken } from '@/lib/session';
+import { authHeader, isSignedIn, rememberBookingToken } from '@/lib/session';
 
 interface Guest {
   fullName: string;
@@ -37,6 +44,28 @@ export function CheckoutForm({ batch, via }: Props) {
   const [guests, setGuests] = useState<Guest[]>([blankGuest()]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Not signed in: the mobile number is confirmed with an SMS code, which also signs in. */
+  const [signedIn, setSignedIn] = useState(false);
+  const [codeFor, setCodeFor] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      if (!(await isSignedIn())) return;
+      setSignedIn(true);
+      // Returning customers: prefill from their profile and last booking (blank fields only).
+      const [me, last] = await Promise.all([
+        authedFetch('/v1/me', MeResponse).catch(() => null),
+        authedFetch('/v1/me/bookings?limit=1', MyBookingList).catch(() => null),
+      ]);
+      const previous = last?.items[0]?.contact;
+      const phone = me?.user.phone ?? previous?.phone ?? '';
+      setContact((c) => ({
+        name: c.name || me?.user.fullName || previous?.name || '',
+        phone: c.phone || phone.replace(/^\+91(?=\d{10}$)/, ''),
+        email: c.email || me?.user.email || previous?.email || '',
+      }));
+    })();
+  }, []);
 
   /**
    * One Idempotency-Key per distinct request body: retrying the same submission (double tap,
@@ -51,22 +80,21 @@ export function CheckoutForm({ batch, via }: Props) {
 
   const total = useMemo(() => batch.pricePaise * quantity, [batch.pricePaise, quantity]);
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-
+  /** The request body, or null after showing what to fix. */
+  function prepare(): { phone: string; serialized: string } | null {
+    const fail = (message: string) => {
+      setError(message);
+      return null;
+    };
     const phone = toE164(contact.phone);
-    if (!phone) return setError('Enter a valid mobile number, e.g. 98765 43210.');
+    if (!phone) return fail('Enter a valid mobile number, e.g. 98765 43210.');
     const emergencyPhone = emergency.phone ? toE164(emergency.phone) : null;
-    if (emergency.phone && !emergencyPhone)
-      return setError('Enter a valid emergency contact number.');
-    if (emergency.phone && !emergency.name.trim())
-      return setError('Add the emergency contact’s name.');
-    if (batch.pickups.length > 0 && !pickupPointId) return setError('Choose a pickup point.');
+    if (emergency.phone && !emergencyPhone) return fail('Enter a valid emergency contact number.');
+    if (emergency.phone && !emergency.name.trim()) return fail('Add the emergency contact’s name.');
+    if (batch.pickups.length > 0 && !pickupPointId) return fail('Choose a pickup point.');
     const guestPhones = guests.map((g) => (g.phone.trim() ? toE164(g.phone) : null));
     const badPhone = guests.findIndex((g, i) => g.phone.trim() && !guestPhones[i]);
-    if (badPhone >= 0)
-      return setError(`Enter a valid mobile number for traveller ${badPhone + 1}.`);
+    if (badPhone >= 0) return fail(`Enter a valid mobile number for traveller ${badPhone + 1}.`);
 
     const body = {
       batchId: batch.id,
@@ -88,7 +116,27 @@ export function CheckoutForm({ batch, via }: Props) {
         ...(g.pickupPointId ? { pickupPointId: g.pickupPointId } : {}),
       })),
     };
-    const serialized = JSON.stringify(body);
+    return { phone, serialized: JSON.stringify(body) };
+  }
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const prepared = prepare();
+    if (!prepared) return;
+    if (!(await isSignedIn())) return setCodeFor(prepared.phone);
+    await book(prepared.serialized);
+  }
+
+  /** After the code is accepted: book with what the form holds now. */
+  async function onPhoneVerified() {
+    setSignedIn(true);
+    setCodeFor(null);
+    const prepared = prepare();
+    if (prepared) await book(prepared.serialized);
+  }
+
+  async function book(serialized: string) {
     if (attempt.current?.body !== serialized) {
       attempt.current = { body: serialized, key: crypto.randomUUID() };
     }
@@ -355,6 +403,7 @@ export function CheckoutForm({ batch, via }: Props) {
         </div>
         <p className="small muted" style={{ margin: 0 }}>
           Payment is arranged with the organizer. Your seats are confirmed as soon as you book.
+          {!signedIn && ' We’ll text a code to your mobile to confirm it’s you.'}
         </p>
         {batch.trek.cancellationPolicy && (
           <details className="small">
@@ -362,14 +411,28 @@ export function CheckoutForm({ batch, via }: Props) {
             <p style={{ whiteSpace: 'pre-line', marginTop: 8 }}>{batch.trek.cancellationPolicy}</p>
           </details>
         )}
-        {error && (
-          <p className="notice danger small" role="alert" style={{ margin: 0 }}>
-            {error}
-          </p>
+        {codeFor && codeFor === toE164(contact.phone) ? (
+          <PhoneCodeEntry
+            phone={codeFor}
+            action="Verify & book"
+            onVerified={onPhoneVerified}
+            onChangeNumber={() => {
+              setCodeFor(null);
+              document.getElementById('c-phone')?.focus();
+            }}
+          />
+        ) : (
+          <>
+            {error && (
+              <p className="notice danger small" role="alert" style={{ margin: 0 }}>
+                {error}
+              </p>
+            )}
+            <button type="submit" disabled={submitting}>
+              {submitting ? 'Booking…' : 'Confirm booking'}
+            </button>
+          </>
         )}
-        <button type="submit" disabled={submitting}>
-          {submitting ? 'Booking…' : 'Confirm booking'}
-        </button>
       </aside>
     </form>
   );

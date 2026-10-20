@@ -20,6 +20,8 @@ let app: TestApp;
 let pool: DbClient;
 let fx: ReturnType<typeof createFixtures>;
 let keys: Awaited<ReturnType<typeof createTestKeys>>;
+/** The signed-in customer making bookings (phone sign-in at checkout). */
+let customerHeaders: Record<string, string>;
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -30,6 +32,7 @@ beforeAll(async () => {
   pool = createDb(testConfig().DATABASE_URL, { max: 4, applicationName: 'ohviana-test-bookings' });
   app = await createTestApp({ verifier: keys.verifier, dbClient: pool });
   fx = createFixtures(app.db);
+  customerHeaders = { authorization: `Bearer ${await keys.sign({ sub: await fx.user() })}` };
 });
 
 afterAll(async () => {
@@ -135,7 +138,7 @@ const book = (body: object, o: { key?: string; headers?: Record<string, string> 
   app.inject({
     method: 'POST',
     url: '/v1/bookings',
-    headers: { 'idempotency-key': o.key ?? fx.idemKey(), ...o.headers },
+    headers: { 'idempotency-key': o.key ?? fx.idemKey(), ...(o.headers ?? customerHeaders) },
     payload: body,
   });
 
@@ -231,9 +234,23 @@ describe('booking seats', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/bookings',
+      headers: customerHeaders,
       payload: bookingBody(batch.id),
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it('requires signing in (phone code at checkout) before booking', async () => {
+    const s = await setup();
+    const batch = await makeBatch(s);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/bookings',
+      headers: { 'idempotency-key': fx.idemKey() },
+      payload: bookingBody(batch.id),
+    });
+    expect(res.statusCode).toBe(401);
+    expect(await seatsOf(batch.id)).toBe(0);
   });
 
   it('requires choosing one of the offered pickup points', async () => {
@@ -366,7 +383,7 @@ describe('direct-link attribution', () => {
 });
 
 describe('viewing and cancelling', () => {
-  it('lets a guest view and cancel with the access token, releasing seats', async () => {
+  it('lets whoever holds the access token view and cancel, releasing seats', async () => {
     const s = await setup();
     const batch = await makeBatch(s);
     const created = (await book(bookingBody(batch.id, 3))).json();
@@ -410,10 +427,20 @@ describe('viewing and cancelling', () => {
     const meHeaders = { authorization: `Bearer ${await keys.sign({ sub: me })}` };
     const created = (await book(bookingBody(batch.id, 1), { headers: meHeaders })).json();
 
+    // A nameless account takes the contact name; a later booking never overwrites it.
+    const profile = async () =>
+      (await app.inject({ method: 'GET', url: '/v1/me', headers: meHeaders })).json().user;
+    expect((await profile()).fullName).toBe('Asha Rao');
+    await book(
+      bookingBody(batch.id, 1, { contact: { name: 'Someone Else', phone: '+919876543210' } }),
+      { headers: meHeaders },
+    );
+    expect((await profile()).fullName).toBe('Asha Rao');
+
     const mine = await app.inject({ method: 'GET', url: '/v1/me/bookings', headers: meHeaders });
-    expect(mine.json().items.map((b: { bookingReference: string }) => b.bookingReference)).toEqual([
-      created.bookingReference,
-    ]);
+    expect(
+      mine.json().items.map((b: { bookingReference: string }) => b.bookingReference),
+    ).toContain(created.bookingReference);
 
     const stranger = { authorization: `Bearer ${await keys.sign({ sub: await fx.user() })}` };
     expect(

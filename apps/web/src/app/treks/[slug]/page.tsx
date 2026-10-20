@@ -1,14 +1,14 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { PublicBatchList, PublicTrekDetail } from '@ohviana/contracts';
-import { BatchFilters } from '@/components/BatchFilters';
+import { PublicBatchList, PublicTrekDetail, TrekDateList } from '@ohviana/contracts';
 import { BatchList } from '@/components/BatchList';
-import { Icon } from '@/components/Icon';
+import { Icon, type IconName } from '@/components/Icon';
 import { Mountains } from '@/components/Mountains';
-import { ApiError, apiFetch, apiFetchOrNotFound, qs } from '@/lib/api';
+import { DateGrid, DateStrip, dayLabel } from '@/components/TrekDates';
+import { apiFetch, apiFetchOrNotFound, qs } from '@/lib/api';
 import { price } from '@/lib/format';
 import { mediaUrl } from '@/lib/media';
-import { isoDay, one, type SearchParams } from '@/lib/params';
+import { isoDay, type SearchParams } from '@/lib/params';
 
 type Params = Promise<{ slug: string }>;
 
@@ -23,9 +23,9 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   const where = [trek.district, trek.state].filter(Boolean).join(', ');
   const description =
     trek.summary ??
-    `Compare ${trek.name} trek departures${where ? ` in ${where}` : ''} from verified organizers.`;
+    `Book the ${trek.name} trek${where ? ` in ${where}` : ''} with verified organizers: dates, prices and pickup points.`;
   return {
-    title: `${trek.name} trek — compare departures`,
+    title: `${trek.name} trek — dates & prices`,
     description,
     alternates: { canonical: `/treks/${trek.slug}` },
     openGraph: {
@@ -44,33 +44,35 @@ export default async function TrekPage({
   searchParams: SearchParams;
 }) {
   const { slug } = await params;
-  const sp = await searchParams;
-  const from = isoDay(sp.from);
-  const to = isoDay(sp.to);
-  const sort = one(sp.sort) === 'price_asc' ? 'price_asc' : 'departure_asc';
-  const includeUnavailable = one(sp.includeUnavailable) === 'true';
-  const cursor = one(sp.cursor);
+  const date = isoDay((await searchParams).date);
 
   const trek = await getTrek(slug);
-  let listError: string | null = null;
-  const batches = await apiFetch(
-    `/v1/treks/${encodeURIComponent(slug)}/batches${qs({
-      from,
-      to,
-      sort,
-      cursor,
-      includeUnavailable: includeUnavailable ? 'true' : undefined,
-      limit: 20,
-    })}`,
-    PublicBatchList,
-    { next: { revalidate: 30 } },
-  ).catch((err: unknown) => {
-    listError =
-      err instanceof ApiError && err.status === 400
-        ? err.message
-        : 'Departures are unavailable right now.';
-    return null;
-  });
+  const dates = await apiFetch(`/v1/treks/${encodeURIComponent(slug)}/dates`, TrekDateList, {
+    next: { revalidate: 30 },
+  })
+    .then((d) => d.items)
+    .catch(() => null);
+  // A date chosen: every organizer departing that day, bookable first, cheapest first.
+  const options = date
+    ? await apiFetch(
+        `/v1/treks/${encodeURIComponent(slug)}/batches${qs({
+          from: date,
+          to: date,
+          sort: 'price_asc',
+          includeUnavailable: 'true',
+          limit: 50,
+        })}`,
+        PublicBatchList,
+        { next: { revalidate: 30 } },
+      )
+        .then((l) =>
+          [...l.items].sort(
+            (x, y) =>
+              Number(x.availability !== 'available') - Number(y.availability !== 'available'),
+          ),
+        )
+        .catch(() => null)
+    : null;
 
   const a = trek.availability;
 
@@ -140,50 +142,136 @@ export default async function TrekPage({
             <p style={{ whiteSpace: 'pre-line', margin: 0 }}>{trek.description}</p>
           </section>
         )}
-        <div>
-          <section className="stack" aria-labelledby="departures">
-            <h2 id="departures">Compare departures</h2>
-            <BatchFilters
-              action={`/treks/${trek.slug}`}
-              from={from}
-              to={to}
-              sort={sort}
-              includeUnavailable={includeUnavailable}
-            />
-            {listError && <p className="notice danger">{listError}</p>}
-            {batches &&
-              (batches.items.length === 0 ? (
+        <section id="departures" className="stack" style={{ scrollMarginTop: 80 }}>
+          {dates === null ? (
+            <>
+              <h2 style={{ margin: 0 }}>Dates</h2>
+              <p className="notice danger">Dates are unavailable right now. Please try again.</p>
+            </>
+          ) : !date ? (
+            <>
+              <div className="spread">
+                <h2 style={{ margin: 0 }}>Pick a date</h2>
+                {dates.length > 0 && (
+                  <span className="muted small">
+                    {dates.length} upcoming date{dates.length === 1 ? '' : 's'}
+                  </span>
+                )}
+              </div>
+              {dates.length === 0 ? (
                 <div className="empty-state">
                   <span className="icon-circle">
                     <Icon name="calendar" size={26} />
                   </span>
-                  <strong>No departures match</strong>
-                  <span className="muted small">
-                    Try other dates, or include sold-out departures.
+                  <strong>No upcoming dates yet</strong>
+                  <span className="muted small">Organizers add new dates regularly.</span>
+                </div>
+              ) : (
+                <DateGrid slug={trek.slug} dates={dates} />
+              )}
+            </>
+          ) : (
+            <>
+              <div className="spread">
+                <h2 style={{ margin: 0 }}>{dayLabel(date)}</h2>
+                <Link href={`/treks/${trek.slug}#departures`} className="small">
+                  All dates
+                </Link>
+              </div>
+              {dates.length > 0 && <DateStrip slug={trek.slug} dates={dates} selected={date} />}
+              {options === null ? (
+                <p className="notice danger">Departures are unavailable right now.</p>
+              ) : options.length === 0 ? (
+                <div className="empty-state">
+                  <span className="icon-circle">
+                    <Icon name="calendar" size={26} />
                   </span>
+                  <strong>No departures on this date</strong>
+                  <span className="muted small">Pick another date above.</span>
                 </div>
               ) : (
                 <>
-                  <BatchList batches={batches.items} />
-                  {batches.nextCursor && (
-                    <Link
-                      className="btn secondary"
-                      href={`/treks/${trek.slug}${qs({
-                        from,
-                        to,
-                        sort,
-                        includeUnavailable: includeUnavailable ? 'true' : undefined,
-                        cursor: batches.nextCursor,
-                      })}`}
-                    >
-                      More departures
-                    </Link>
-                  )}
+                  <p className="muted small" style={{ margin: 0 }}>
+                    {options.length === 1
+                      ? '1 organizer runs this date.'
+                      : `${options.length} organizers run this date — cheapest first.`}
+                  </p>
+                  <BatchList batches={options} byOrganizer />
                 </>
-              ))}
-          </section>
-        </div>
+              )}
+            </>
+          )}
+        </section>
+
+        <OtherOptions trek={trek} date={date} />
       </div>
     </>
+  );
+}
+
+/** The way out when no date (or no organizer) fits. */
+function OtherOptions({ trek, date }: { trek: PublicTrekDetail; date: string | undefined }) {
+  const items: { icon: IconName; title: string; text: string; href: string }[] = [
+    ...(date
+      ? [
+          {
+            icon: 'calendar' as const,
+            title: 'Try another date',
+            text: `See every upcoming date for ${trek.name}.`,
+            href: `/treks/${trek.slug}#departures`,
+          },
+        ]
+      : []),
+    ...(trek.district
+      ? [
+          {
+            icon: 'pin' as const,
+            title: `Other treks in ${trek.district}`,
+            text: 'Same area, different dates.',
+            href: `/search${qs({ district: trek.district })}`,
+          },
+        ]
+      : []),
+    trek.difficulty === 'easy'
+      ? {
+          icon: 'grid' as const,
+          title: 'All treks',
+          text: 'Browse every trek with upcoming dates.',
+          href: '/search',
+        }
+      : {
+          icon: 'sparkle' as const,
+          title: 'Beginner-friendly treks',
+          text: 'Easier trails, great for a first trek.',
+          href: '/search?difficulty=easy',
+        },
+    {
+      icon: 'mail',
+      title: 'Ask us',
+      text: 'Tell us the date you want; we’ll check with organizers.',
+      href: '/contact',
+    },
+  ];
+  return (
+    <section className="stack" aria-labelledby="other-options">
+      <h2 id="other-options" style={{ margin: 0 }}>
+        {date ? 'Not the right date?' : 'Don’t see a date that works?'}
+      </h2>
+      <ul className="option-grid">
+        {items.map((o) => (
+          <li key={o.title}>
+            <Link href={o.href} className="card option-card">
+              <span className="icon-circle">
+                <Icon name={o.icon} size={20} />
+              </span>
+              <span className="stack" style={{ gap: 2 }}>
+                <strong>{o.title}</strong>
+                <span className="muted small">{o.text}</span>
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

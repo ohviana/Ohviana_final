@@ -1,6 +1,6 @@
 'use client';
 
-import { SessionResponse } from '@ohviana/contracts';
+import { OtpSendResponse, SessionResponse } from '@ohviana/contracts';
 import { apiFetch } from './api';
 import { getSupabase } from './supabase';
 
@@ -9,6 +9,7 @@ import { getSupabase } from './supabase';
  *  - `password` — email + password accounts run by the Ohviana API (no emails sent).
  *  - `supabase` — Supabase magic-link email (rate-limited on the free plan).
  *  - `dev`      — TEMPORARY local testing: email only, no password (API AUTH_MODE=dev).
+ * Customers sign in with a phone code at checkout in every mode (an Ohviana API session).
  */
 export type AuthMode = 'password' | 'supabase' | 'dev';
 export const AUTH_MODE: AuthMode = (['password', 'dev'] as const).includes(
@@ -25,7 +26,8 @@ const AUTH_EVENT = 'ohviana:auth-change';
 interface StoredSession {
   accessToken: string;
   expiresAt: string;
-  email: string;
+  email: string | null;
+  phone?: string | null;
 }
 
 function read<T>(key: string): T | null {
@@ -56,7 +58,10 @@ function currentSession(): StoredSession | null {
 
 // ---------- Password mode ----------
 
-async function startSession(path: '/v1/auth/signin' | '/v1/auth/signup', body: object) {
+async function startSession(
+  path: '/v1/auth/signin' | '/v1/auth/signup' | '/v1/auth/otp/verify',
+  body: object,
+) {
   const session = await apiFetch(path, SessionResponse, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -66,6 +71,7 @@ async function startSession(path: '/v1/auth/signin' | '/v1/auth/signup', body: o
     accessToken: session.accessToken,
     expiresAt: session.expiresAt,
     email: session.user.email,
+    phone: session.user.phone,
   } satisfies StoredSession);
   return session;
 }
@@ -75,6 +81,19 @@ export const signInWithPassword = (email: string, password: string) =>
 
 export const signUpWithPassword = (email: string, password: string, fullName?: string) =>
   startSession('/v1/auth/signup', { email, password, ...(fullName ? { fullName } : {}) });
+
+// ---------- Phone + SMS code (customers, any mode) ----------
+
+/** Texts a 6-digit sign-in code to `phone` (E.164). */
+export const sendPhoneCode = (phone: string) =>
+  apiFetch('/v1/auth/otp/send', OtpSendResponse, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ phone }),
+  });
+
+export const signInWithPhoneCode = (phone: string, code: string) =>
+  startSession('/v1/auth/otp/verify', { phone, code });
 
 // ---------- Dev mode ----------
 
@@ -93,10 +112,10 @@ export function setDevUser(email: string | null): void {
 
 /** Credentials header for the signed-in user, or {} for guests. Never throws. */
 export async function authHeader(): Promise<Record<string, string>> {
-  if (AUTH_MODE === 'password') {
-    const s = currentSession();
-    return s ? { authorization: `Bearer ${s.accessToken}` } : {};
-  }
+  // An Ohviana session (password or phone sign-in) wins in every mode.
+  const s = currentSession();
+  if (s) return { authorization: `Bearer ${s.accessToken}` };
+  if (AUTH_MODE === 'password') return {};
   if (AUTH_MODE === 'dev') {
     try {
       const email = localStorage.getItem(DEV_USER_KEY);
@@ -119,7 +138,9 @@ export async function isSignedIn(): Promise<boolean> {
 
 /** Email of the signed-in user when known locally (password/dev modes). */
 export function signedInEmail(): string | null {
-  if (AUTH_MODE === 'password') return currentSession()?.email ?? null;
+  const s = currentSession();
+  if (s) return s.email;
+  if (AUTH_MODE === 'password') return null;
   if (AUTH_MODE === 'dev') {
     try {
       return localStorage.getItem(DEV_USER_KEY);
@@ -132,25 +153,28 @@ export function signedInEmail(): string | null {
 
 /** Calls `cb` whenever the user signs in or out. Returns an unsubscribe function. */
 export function onAuthChange(cb: () => void): () => void {
-  if (AUTH_MODE !== 'supabase') {
-    const handler = () => cb();
-    window.addEventListener(AUTH_EVENT, handler);
-    window.addEventListener('storage', handler);
-    return () => {
-      window.removeEventListener(AUTH_EVENT, handler);
-      window.removeEventListener('storage', handler);
-    };
-  }
+  const handler = () => cb();
+  window.addEventListener(AUTH_EVENT, handler);
+  window.addEventListener('storage', handler);
+  const unlisten = () => {
+    window.removeEventListener(AUTH_EVENT, handler);
+    window.removeEventListener('storage', handler);
+  };
+  if (AUTH_MODE !== 'supabase') return unlisten;
   try {
     const { data } = getSupabase().auth.onAuthStateChange(() => cb());
-    return () => data.subscription.unsubscribe();
+    return () => {
+      unlisten();
+      data.subscription.unsubscribe();
+    };
   } catch {
-    return () => {};
+    return unlisten;
   }
 }
 
 export async function signOut(): Promise<void> {
-  if (AUTH_MODE === 'password') return write(SESSION_KEY, null);
+  write(SESSION_KEY, null);
+  if (AUTH_MODE === 'password') return;
   if (AUTH_MODE === 'dev') return setDevUser(null);
   await getSupabase().auth.signOut();
 }

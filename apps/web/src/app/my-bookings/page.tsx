@@ -3,9 +3,11 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { MyBookingList, type CustomerBooking } from '@ohviana/contracts';
+import { AccountStrip } from '@/components/AccountStrip';
 import { BookingView } from '@/components/BookingView';
+import { PhoneSignIn } from '@/components/PhoneSignIn';
 import { apiFetch } from '@/lib/api';
-import { authHeader } from '@/lib/session';
+import { authHeader, onAuthChange } from '@/lib/session';
 
 type State =
   | { kind: 'loading' }
@@ -17,7 +19,7 @@ export default function MyBookingsPage() {
   const [state, setState] = useState<State>({ kind: 'loading' });
 
   useEffect(() => {
-    (async () => {
+    const load = async () => {
       const headers = await authHeader();
       if (Object.keys(headers).length === 0) return setState({ kind: 'signed-out' });
       try {
@@ -29,17 +31,23 @@ export default function MyBookingsPage() {
       } catch {
         setState({ kind: 'error' });
       }
-    })();
+    };
+    void load();
+    return onAuthChange(() => void load());
   }, []);
 
   return (
     <div className="container narrow stack-lg">
-      <h1>My bookings</h1>
+      <header className="stack" style={{ gap: 8 }}>
+        <h1 style={{ margin: 0 }}>My bookings</h1>
+        {state.kind === 'ready' && <AccountStrip />}
+      </header>
       {state.kind === 'loading' && <p className="muted">Loading…</p>}
       {state.kind === 'signed-out' && (
-        <p>
-          <Link href="/login">Sign in</Link> to see bookings made with your account.
-        </p>
+        <div className="card stack" style={{ maxWidth: 420 }}>
+          <p style={{ margin: 0 }}>Sign in with your mobile number to see your bookings.</p>
+          <PhoneSignIn />
+        </div>
       )}
       {state.kind === 'error' && <p className="notice danger">Could not load your bookings.</p>}
       {state.kind === 'ready' &&
