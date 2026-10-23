@@ -4,64 +4,54 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { OrganizerTrek } from '@ohviana/contracts';
-import { PHOTO_CATEGORIES, type PhotoCategory } from '@ohviana/shared';
 import { useAction } from '@/components/dash/hooks';
 import { useOrg } from '@/components/dash/org-context';
 import { Outcome } from '@/components/dash/ui';
 import { Icon } from '@/components/Icon';
-import { istLocalToIso, linesToList, rupeesToPaise } from '@/lib/datetime';
-import { PHOTO_CATEGORY_LABELS } from '@/lib/media';
+import { linesToList } from '@/lib/datetime';
 import { DestinationInput } from '../DestinationInput';
 import { MAX_BYTES, MAX_PHOTOS, uploadTrekPhoto } from '../PhotoManager';
-
-interface PickupRow {
-  key: number;
-  name: string;
-  landmark: string;
-  time: string;
-}
+import {
+  DIFFICULTY_CHOICES,
+  ItineraryEditor,
+  MAX_DURATION_DAYS,
+  StartPointInput,
+  itineraryBody,
+  type ItineraryDrafts,
+} from '../TrekFields';
 
 interface PhotoRow {
   key: number;
   file: File;
   preview: string;
-  category: PhotoCategory;
 }
 
 let nextKey = 1;
-const pickupRow = (): PickupRow => ({ key: nextKey++, name: '', landmark: '', time: '' });
 
 /**
- * Everything about a new trek in one form: details, photos, pickup points and its first batch.
- * One request creates it all (nothing is saved if anything is wrong); photos upload right after.
+ * Add a trek: what it is, day by day, what's included and photos. Dates (batches) and pickup
+ * points are added on the trek page afterwards. Photos upload right after the trek is created.
  */
 export default function NewTrekPage() {
   const { call, can, org } = useOrg();
   const router = useRouter();
   const action = useAction();
-  const [destination, setDestination] = useState('');
+  const [name, setName] = useState('');
   const [f, setF] = useState({
-    title: '',
-    summary: '',
     durationDays: '',
-    itinerary: '',
+    difficulty: '',
+    altitude: '',
+    summary: '',
     inclusions: '',
     exclusions: '',
     thingsToCarry: '',
     cancellationPolicy: '',
   });
-  const [pickups, setPickups] = useState<PickupRow[]>([pickupRow()]);
+  const [startPoint, setStartPoint] = useState('');
+  const [days, setDays] = useState<ItineraryDrafts>({});
   const [photos, setPhotos] = useState<PhotoRow[]>([]);
-  const [withBatch, setWithBatch] = useState(true);
-  const [b, setB] = useState({
-    departure: '',
-    returnAt: '',
-    cutoffHours: '12',
-    price: '',
-    capacity: '20',
-    maxPerBooking: '10',
-  });
   const [progress, setProgress] = useState<string | null>(null);
+  // Pending organizers can prepare treks; they go live once Ohviana approves the organizer.
   const canPublish = can('batches:publish');
 
   // Release preview URLs when photos are removed or the page closes.
@@ -70,79 +60,49 @@ export default function NewTrekPage() {
 
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) =>
     setF({ ...f, [k]: e.target.value });
-  const setBatch = (k: keyof typeof b) => (e: { target: { value: string } }) =>
-    setB({ ...b, [k]: e.target.value });
-  const setPickup = (key: number, k: 'name' | 'landmark' | 'time', v: string) =>
-    setPickups(pickups.map((p) => (p.key === key ? { ...p, [k]: v } : p)));
+  const durationDays = f.durationDays ? Number(f.durationDays) : null;
 
   function addPhotos(list: FileList | null) {
     if (!list) return;
-    const room = MAX_PHOTOS - photos.length;
-    const picked = [...list].filter((file) => file.type.startsWith('image/')).slice(0, room);
+    const picked = [...list]
+      .filter((file) => file.type.startsWith('image/'))
+      .slice(0, MAX_PHOTOS - photos.length);
     const tooBig = picked.filter((file) => file.size > MAX_BYTES);
     if (tooBig.length) action.setError(`${tooBig.map((x) => x.name).join(', ')}: over 10 MB`);
     setPhotos([
       ...photos,
       ...picked
         .filter((file) => file.size <= MAX_BYTES)
-        .map((file) => ({
-          key: nextKey++,
-          file,
-          preview: URL.createObjectURL(file),
-          category: 'destination' as PhotoCategory,
-        })),
+        .map((file) => ({ key: nextKey++, file, preview: URL.createObjectURL(file) })),
     ]);
   }
 
-  async function save(publish: boolean, e?: FormEvent) {
-    e?.preventDefault();
-    if (f.title.trim().length < 2) return action.setError('Enter the trek name.');
-    if (!destination.trim()) return action.setError('Enter the destination, e.g. Kudremukh.');
-
-    const usedPickups = pickups.filter((p) => p.name.trim());
-    let firstBatch: Record<string, unknown> | undefined;
-    if (withBatch) {
-      const departureAt = istLocalToIso(b.departure);
-      const returnAt = istLocalToIso(b.returnAt);
-      if (!departureAt || !returnAt)
-        return action.setError('Enter the batch departure and return.');
-      const pricePaise = rupeesToPaise(b.price);
-      if (pricePaise === null) return action.setError('Enter the price in rupees, e.g. 2499');
-      const cutoffMs = Math.max(0, Number(b.cutoffHours) || 0) * 3_600_000;
-      firstBatch = {
-        departureAt,
-        returnAt,
-        bookingCutoffAt: new Date(Date.parse(departureAt) - cutoffMs).toISOString(),
-        pricePaise,
-        capacity: Number(b.capacity),
-        maxSeatsPerBooking: Number(b.maxPerBooking),
-      };
-    } else if (publish) {
-      return action.setError('Add the first batch to publish, or save as draft.');
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    const trekName = name.trim().replace(/\s+/g, ' ');
+    if (trekName.length < 2) return action.setError('Enter the trek name, e.g. Kodachadri.');
+    const altitude = f.altitude.trim() ? Number(f.altitude) : null;
+    if (altitude !== null && !(Number.isInteger(altitude) && altitude > 0 && altitude <= 9000)) {
+      return action.setError('Enter the altitude in metres, e.g. 1343.');
     }
-    const badTime = usedPickups.find((p) => p.time && !istLocalToIso(p.time));
-    if (badTime) return action.setError(`Check the pickup time for ${badTime.name}.`);
 
     const created = await action.run(async () => {
       const trek = await call('/treks', OrganizerTrek, {
         method: 'POST',
         body: {
-          title: f.title.trim(),
-          catalogTrekName: destination.trim(),
+          title: trekName,
+          catalogTrekName: trekName,
+          durationDays,
+          difficulty: f.difficulty || null,
+          maxAltitudeM: altitude,
+          startPoint: startPoint.trim() || null,
           summary: f.summary.trim() || null,
-          durationDays: f.durationDays ? Number(f.durationDays) : null,
-          itinerary: linesToList(f.itinerary).map((title, i) => ({ day: i + 1, title })),
+          itinerary: itineraryBody(days, durationDays),
           inclusions: linesToList(f.inclusions),
           exclusions: linesToList(f.exclusions),
           thingsToCarry: linesToList(f.thingsToCarry),
           cancellationPolicy: f.cancellationPolicy.trim() || null,
-          pickupPoints: usedPickups.map((p) => ({
-            name: p.name.trim(),
-            ...(p.landmark.trim() ? { landmark: p.landmark.trim() } : {}),
-            ...(withBatch && p.time ? { pickupAt: istLocalToIso(p.time)! } : {}),
-          })),
-          ...(firstBatch ? { firstBatch } : {}),
-          publish,
+          publish: canPublish,
         },
       });
       // The trek exists now; a failed photo shouldn't lose it, so collect problems instead.
@@ -150,7 +110,7 @@ export default function NewTrekPage() {
       for (const [i, p] of photos.entries()) {
         setProgress(`Uploading photo ${i + 1} of ${photos.length}…`);
         try {
-          await uploadTrekPhoto(trek.id, org.organizerId, p.file, p.category);
+          await uploadTrekPhoto(trek.id, org.organizerId, p.file, 'destination');
         } catch {
           failed.push(p.file.name);
         }
@@ -159,7 +119,7 @@ export default function NewTrekPage() {
       return { trek, failed };
     });
     if (!created) return;
-    const params = new URLSearchParams({ created: publish ? 'published' : 'draft' });
+    const params = new URLSearchParams({ created: canPublish ? 'published' : 'draft' });
     if (created.failed.length) params.set('photosFailed', String(created.failed.length));
     router.push(`/dashboard/treks/${created.trek.id}?${params}`);
   }
@@ -168,329 +128,203 @@ export default function NewTrekPage() {
     return <Outcome error="Your role can't create treks." />;
   }
 
-  const area = (k: keyof typeof f, label: string, hint?: string, placeholder?: string) => (
+  const list = (k: 'inclusions' | 'exclusions', label: string, placeholder: string) => (
     <div className="field">
       <label htmlFor={`nt-${k}`}>
-        {label} {hint && <span className="hint">{hint}</span>}
+        {label} <span className="hint">(one per line)</span>
       </label>
-      <textarea id={`nt-${k}`} value={f[k]} onChange={set(k)} placeholder={placeholder} />
+      <textarea id={`nt-${k}`} rows={5} value={f[k]} onChange={set(k)} placeholder={placeholder} />
     </div>
   );
 
   return (
-    <form onSubmit={(e) => save(false, e)} className="stack" style={{ gap: 20 }}>
-      <div className="stack">
+    <form onSubmit={save} className="stack trek-form" style={{ gap: 20 }}>
+      <div className="stack" style={{ gap: 6 }}>
         <span className="small">
           <Link href="/dashboard/treks">← Treks</Link>
         </span>
-        <span className="eyebrow">New trek</span>
         <h1 style={{ margin: 0 }}>Add a trek</h1>
         <p className="muted" style={{ margin: 0 }}>
-          Fill everything in one go. Only the name, destination and first batch dates are needed —
-          you can add the rest later.
+          Only the name is required. You&apos;ll add dates and pickup points on the next screen.
         </p>
       </div>
 
       <section className="card stack">
-        <h2 className="form-step">
-          <span className="step-num">1</span> The trek
-        </h2>
+        <DestinationInput
+          big
+          label="Trek name"
+          placeholder="e.g. Kodachadri, Kudremukh"
+          value={name}
+          onChange={setName}
+        />
         <div className="form-grid">
           <div className="field">
-            <label htmlFor="nt-title">Trek name</label>
-            <input
-              id="nt-title"
-              required
-              minLength={2}
-              placeholder="Kudremukh Weekend Trek"
-              value={f.title}
-              onChange={set('title')}
-            />
+            <label htmlFor="nt-days">Duration</label>
+            <select id="nt-days" value={f.durationDays} onChange={set('durationDays')}>
+              <option value="">Select</option>
+              {Array.from({ length: MAX_DURATION_DAYS }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>
+                  {n} {n === 1 ? 'day' : 'days'}
+                </option>
+              ))}
+            </select>
           </div>
-          <DestinationInput value={destination} onChange={setDestination} />
           <div className="field">
-            <label htmlFor="nt-days">Duration (days)</label>
+            <label htmlFor="nt-difficulty">Difficulty</label>
+            <select id="nt-difficulty" value={f.difficulty} onChange={set('difficulty')}>
+              <option value="">Select</option>
+              {DIFFICULTY_CHOICES.map((d) => (
+                <option key={d.value} value={d.value}>
+                  {d.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="nt-alt">
+              Altitude <span className="hint">(metres)</span>
+            </label>
             <input
-              id="nt-days"
-              type="number"
-              min={1}
-              max={60}
-              placeholder="2"
-              value={f.durationDays}
-              onChange={set('durationDays')}
+              id="nt-alt"
+              inputMode="numeric"
+              placeholder="e.g. 1343"
+              value={f.altitude}
+              onChange={(e) => setF({ ...f, altitude: e.target.value.replace(/\D/g, '') })}
             />
           </div>
+          <StartPointInput value={startPoint} onChange={setStartPoint} />
         </div>
+      </section>
+
+      <section className="card stack">
+        <h2 className="form-section">Overview</h2>
         <div className="field">
-          <label htmlFor="nt-summary">Short description</label>
-          <input
+          <label htmlFor="nt-summary" className="sr-only">
+            Overview
+          </label>
+          <textarea
             id="nt-summary"
+            rows={3}
             maxLength={500}
-            placeholder="Sunrise summit, shola forests and a night under the stars"
+            placeholder="A short, high-level description: what makes this trek special, the terrain and the views."
             value={f.summary}
             onChange={set('summary')}
           />
+          <span className="hint" style={{ textAlign: 'right' }}>
+            {f.summary.length}/500
+          </span>
+        </div>
+      </section>
+
+      <section className="card stack">
+        <h2 className="form-section">Itinerary</h2>
+        <ItineraryEditor durationDays={durationDays} drafts={days} onChange={setDays} />
+      </section>
+
+      <section className="card stack">
+        <h2 className="form-section">What&apos;s included</h2>
+        <div className="two-up">
+          {list('inclusions', 'Included', 'Transport\nBreakfast and lunch\nTrek guide')}
+          {list('exclusions', 'Not included', 'Personal expenses\nAnything not listed')}
+        </div>
+      </section>
+
+      <section className="card stack">
+        <h2 className="form-section">Things to carry</h2>
+        <div className="field">
+          <label htmlFor="nt-carry" className="sr-only">
+            Things to carry
+          </label>
+          <textarea
+            id="nt-carry"
+            rows={4}
+            value={f.thingsToCarry}
+            onChange={set('thingsToCarry')}
+            placeholder={'2 litres of water\nRain jacket\nTrekking shoes'}
+          />
+          <span className="hint">One per line.</span>
+        </div>
+      </section>
+
+      <section className="card stack">
+        <h2 className="form-section">Cancellation policy</h2>
+        <div className="field">
+          <label htmlFor="nt-policy" className="sr-only">
+            Cancellation policy
+          </label>
+          <textarea
+            id="nt-policy"
+            rows={4}
+            maxLength={5000}
+            value={f.cancellationPolicy}
+            onChange={set('cancellationPolicy')}
+            placeholder="e.g. Full refund up to 7 days before departure, 50% up to 3 days before, no refund after that."
+          />
+          <span className="hint">Shown to trekkers and saved with every booking.</span>
         </div>
       </section>
 
       <section className="card stack">
         <div className="spread">
-          <h2 className="form-step">
-            <span className="step-num">2</span> Photos <span className="hint">(optional)</span>
-          </h2>
+          <h2 className="form-section">Photos</h2>
           <span className="small muted">
             {photos.length}/{MAX_PHOTOS}
           </span>
         </div>
-        <label className="dropzone" htmlFor="nt-photos" style={{ cursor: 'pointer' }}>
-          <span className="icon-circle">
-            <Icon name="download" size={22} style={{ transform: 'rotate(180deg)' }} />
-          </span>
-          <strong>Choose photos</strong>
-          <span className="small muted">
-            Destination views, the trail, your bus, stays, food, groups. JPEG / PNG / WebP up to 10
-            MB each.
-          </span>
-          <input
-            id="nt-photos"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            multiple
-            hidden
-            onChange={(e) => {
-              addPhotos(e.target.files);
-              e.target.value = '';
-            }}
-          />
-        </label>
-        {photos.length > 0 && (
-          <div className="photo-grid">
-            {photos.map((p) => (
-              <div key={p.key} className="photo-tile">
-                <img src={p.preview} alt={p.file.name} />
-                <div className="tile-body">
-                  <select
-                    aria-label={`What ${p.file.name} shows`}
-                    value={p.category}
-                    onChange={(e) =>
-                      setPhotos(
-                        photos.map((x) =>
-                          x.key === p.key ? { ...x, category: e.target.value as PhotoCategory } : x,
-                        ),
-                      )
-                    }
-                  >
-                    {PHOTO_CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {PHOTO_CATEGORY_LABELS[c]}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="small danger"
-                    onClick={() => setPhotos(photos.filter((x) => x.key !== p.key))}
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="card stack">
-        <h2 className="form-step">
-          <span className="step-num">3</span> Itinerary &amp; inclusions{' '}
-          <span className="hint">(optional)</span>
-        </h2>
-        {area(
-          'itinerary',
-          'Itinerary',
-          '(one line per day)',
-          'Day 1: Drive to base, trek to camp\nDay 2: Summit at sunrise, descend',
-        )}
-        <div className="form-grid">
-          {area('inclusions', 'Included', '(one per line)', 'Transport\nBreakfast\nGuide')}
-          {area('exclusions', 'Not included', '(one per line)', 'Personal expenses')}
-          {area('thingsToCarry', 'Things to carry', '(one per line)', 'Water bottle\nRain jacket')}
-        </div>
-        {area('cancellationPolicy', 'Cancellation policy', '(shown to customers)')}
-      </section>
-
-      <section className="card stack">
-        <h2 className="form-step">
-          <span className="step-num">4</span> Pickup points <span className="hint">(optional)</span>
-        </h2>
-        {pickups.map((p, i) => (
-          <div key={p.key} className="pickup-row">
-            <div className="field">
-              <label htmlFor={`pk-name-${p.key}`}>Pickup {i + 1}</label>
-              <input
-                id={`pk-name-${p.key}`}
-                placeholder="Majestic Bus Stand"
-                value={p.name}
-                onChange={(e) => setPickup(p.key, 'name', e.target.value)}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor={`pk-lm-${p.key}`}>Landmark</label>
-              <input
-                id={`pk-lm-${p.key}`}
-                placeholder="Platform 1 entrance"
-                value={p.landmark}
-                onChange={(e) => setPickup(p.key, 'landmark', e.target.value)}
-              />
-            </div>
-            {withBatch && (
-              <div className="field">
-                <label htmlFor={`pk-time-${p.key}`}>Pickup time (IST)</label>
-                <input
-                  id={`pk-time-${p.key}`}
-                  type="datetime-local"
-                  value={p.time}
-                  onChange={(e) => setPickup(p.key, 'time', e.target.value)}
-                />
-              </div>
-            )}
-            {pickups.length > 1 && (
+        <div className="photo-slots">
+          {photos.map((p, i) => (
+            <figure key={p.key} className="photo-slot">
+              <img src={p.preview} alt={p.file.name} />
+              {i === 0 && <span className="badge glass">Cover</span>}
               <button
                 type="button"
-                className="small secondary"
-                aria-label={`Remove pickup ${i + 1}`}
-                onClick={() => setPickups(pickups.filter((x) => x.key !== p.key))}
+                className="photo-remove"
+                aria-label={`Remove ${p.file.name}`}
+                onClick={() => setPhotos(photos.filter((x) => x.key !== p.key))}
               >
-                Remove
+                <Icon name="x" size={16} />
               </button>
-            )}
-          </div>
-        ))}
-        {pickups.length < 20 && (
-          <button
-            type="button"
-            className="small secondary"
-            style={{ alignSelf: 'flex-start' }}
-            onClick={() => setPickups([...pickups, pickupRow()])}
-          >
-            + Add another pickup
-          </button>
-        )}
-      </section>
-
-      <section className="card stack">
-        <div className="spread">
-          <h2 className="form-step">
-            <span className="step-num">5</span> First batch
-          </h2>
-          <label className="cluster small" style={{ gap: 8 }}>
-            <input
-              type="checkbox"
-              checked={withBatch}
-              onChange={(e) => setWithBatch(e.target.checked)}
-              style={{ width: 'auto', minHeight: 0 }}
-            />
-            Add dates now
-          </label>
+            </figure>
+          ))}
+          {photos.length < MAX_PHOTOS && (
+            <label className="photo-slot empty" htmlFor="nt-photos">
+              <Icon name="download" size={22} style={{ transform: 'rotate(180deg)' }} />
+              <span>Add photo</span>
+              <input
+                id="nt-photos"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                hidden
+                onChange={(e) => {
+                  addPhotos(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          )}
         </div>
-        {withBatch ? (
-          <>
-            <p className="small muted" style={{ margin: 0 }}>
-              We name it for you, e.g. <code>RCB_Kudremukh_25th_Sept_Batch_1</code>. Later, open the
-              batch and use <strong>Run this batch again</strong> for new dates.
-            </p>
-            <div className="form-grid">
-              <div className="field">
-                <label htmlFor="nb-dep">Departure (IST)</label>
-                <input
-                  id="nb-dep"
-                  type="datetime-local"
-                  required
-                  value={b.departure}
-                  onChange={setBatch('departure')}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="nb-ret">Return (IST)</label>
-                <input
-                  id="nb-ret"
-                  type="datetime-local"
-                  required
-                  value={b.returnAt}
-                  onChange={setBatch('returnAt')}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="nb-price">Price per person (₹)</label>
-                <input
-                  id="nb-price"
-                  required
-                  inputMode="decimal"
-                  placeholder="2499"
-                  value={b.price}
-                  onChange={setBatch('price')}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="nb-cap">Seats</label>
-                <input
-                  id="nb-cap"
-                  type="number"
-                  min={1}
-                  max={500}
-                  required
-                  value={b.capacity}
-                  onChange={setBatch('capacity')}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="nb-cut">Close bookings (hours before)</label>
-                <input
-                  id="nb-cut"
-                  type="number"
-                  min={0}
-                  max={720}
-                  value={b.cutoffHours}
-                  onChange={setBatch('cutoffHours')}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="nb-max">Max seats per booking</label>
-                <input
-                  id="nb-max"
-                  type="number"
-                  min={1}
-                  max={50}
-                  value={b.maxPerBooking}
-                  onChange={setBatch('maxPerBooking')}
-                />
-              </div>
-            </div>
-          </>
-        ) : (
-          <p className="small muted" style={{ margin: 0 }}>
-            You can add batches from the trek page later.
-          </p>
-        )}
+        <span className="hint">
+          Up to {MAX_PHOTOS} photos (JPEG, PNG or WebP, 10 MB each). The first is the cover.
+        </span>
       </section>
 
       <div className="card stack sticky-actions">
         <Outcome error={action.error} />
         {progress && <span className="small muted">{progress}</span>}
-        {!canPublish && org.status === 'pending' && (
+        {!canPublish && (
           <span className="small muted">
-            Your organization is awaiting approval: save as draft now and publish once approved.
+            Your organization is awaiting approval. The trek is saved now and goes live once
+            you&apos;re approved.
           </span>
         )}
         <div className="cluster">
-          <button type="submit" className="secondary" disabled={action.pending}>
-            Save as draft
+          <button type="submit" disabled={action.pending}>
+            {canPublish ? 'Publish trek' : 'Save trek'} <Icon name="arrowRight" size={16} />
           </button>
-          {canPublish && (
-            <button type="button" disabled={action.pending} onClick={() => void save(true)}>
-              Publish <Icon name="arrowRight" size={16} />
-            </button>
-          )}
+          <Link href="/dashboard/treks" className="btn secondary">
+            Cancel
+          </Link>
         </div>
       </div>
     </form>

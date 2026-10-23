@@ -5,6 +5,7 @@ import {
   BATCH_VIEWS,
   CATALOG_REQUEST_STATUSES,
   CONTENT_STATUSES,
+  DIFFICULTIES,
   ORGANIZER_ROLES,
   ORGANIZER_STATUSES,
 } from '@ohviana/shared';
@@ -129,7 +130,8 @@ export const OrganizerCatalogRequestList = z.object({ items: z.array(OrganizerCa
 // ---------- Trek templates ----------
 
 export const ItineraryDay = z.object({
-  day: z.number().int().min(1).max(60),
+  /** 0 = the night before (e.g. overnight bus), then day 1, 2, … */
+  day: z.number().int().min(0).max(60),
   title: Text(200),
   details: Text(2000).optional(),
 });
@@ -150,7 +152,10 @@ const trekFields = {
   slug: Slug,
   summary: Text(500).nullable(),
   durationDays: z.number().int().min(1).max(60).nullable(),
-  itinerary: z.array(ItineraryDay).max(60),
+  difficulty: z.enum(DIFFICULTIES).nullable(),
+  maxAltitudeM: z.number().int().min(1).max(9000).nullable(),
+  startPoint: Text(80).nullable(),
+  itinerary: z.array(ItineraryDay).max(61),
   inclusions: StringList,
   exclusions: StringList,
   thingsToCarry: StringList,
@@ -207,6 +212,9 @@ export const OrganizerTrek = z.object({
   slug: z.string(),
   summary: z.string().nullable(),
   durationDays: z.number().int().nullable(),
+  difficulty: z.enum(DIFFICULTIES).nullable(),
+  maxAltitudeM: z.number().int().nullable(),
+  startPoint: z.string().nullable(),
   itinerary: z.array(ItineraryDay),
   inclusions: z.array(z.string()),
   exclusions: z.array(z.string()),

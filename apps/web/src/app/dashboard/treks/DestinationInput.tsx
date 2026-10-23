@@ -14,10 +14,17 @@ export function DestinationInput({
   value,
   onChange,
   disabled,
+  label = 'Destination / peak',
+  placeholder = 'e.g. Kudremukh, Devarayanadurga',
+  big = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
+  label?: string;
+  placeholder?: string;
+  /** The headline field of the new-trek form. */
+  big?: boolean;
 }) {
   const { call } = useOrg();
   const listId = useId();
@@ -37,8 +44,8 @@ export function DestinationInput({
   const exact = suggestions.some((s) => s.toLowerCase() === value.trim().toLowerCase());
 
   return (
-    <div className="field">
-      <label htmlFor={`${listId}-input`}>Destination / peak</label>
+    <div className={`field${big ? ' field-big' : ''}`}>
+      <label htmlFor={`${listId}-input`}>{label}</label>
       <div className="input-icon">
         <Icon name="pin" />
         <input
@@ -47,7 +54,7 @@ export function DestinationInput({
           required
           minLength={2}
           disabled={disabled}
-          placeholder="e.g. Kudremukh, Devarayanadurga"
+          placeholder={placeholder}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           autoComplete="off"

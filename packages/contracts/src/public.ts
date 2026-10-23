@@ -88,6 +88,8 @@ export const PublicBatch = z.object({
     slug: z.string(),
     summary: z.string().nullable(),
     durationDays: z.number().int().nullable(),
+    /** Where this organizer's trip starts, e.g. "Bengaluru". */
+    startPoint: z.string().nullable(),
     itinerary: z.array(
       z.object({ day: z.number(), title: z.string(), details: z.string().optional() }),
     ),

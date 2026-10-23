@@ -20,7 +20,7 @@ import type {
   UpdateOrganizerTrekRequest,
   UpdatePickupPointRequest,
 } from '@ohviana/contracts';
-import { slugify, type ContentStatus } from '@ohviana/shared';
+import { slugify, type ContentStatus, type Difficulty } from '@ohviana/shared';
 import type { z } from 'zod';
 import { enqueueEvent } from '../../lib/audit';
 import { loadTrekPhotos } from '../media/service';
@@ -124,6 +124,9 @@ async function toTrekDtos(db: Executor, rows: TrekRow[]): Promise<OrganizerTrek[
     slug: r.slug,
     summary: r.summary,
     durationDays: r.durationDays,
+    difficulty: r.difficulty,
+    maxAltitudeM: r.maxAltitudeM,
+    startPoint: r.startPoint,
     itinerary: r.itinerary,
     inclusions: r.inclusions,
     exclusions: r.exclusions,
@@ -283,10 +286,29 @@ async function findOrCreateCatalogTrek(
   return trek.id;
 }
 
+/**
+ * A destination's difficulty and altitude (shown on its public page) come from the first organizer
+ * who gives them; later organizers never overwrite them (admins can edit the catalog).
+ */
+async function fillCatalogBlanks(
+  tx: Executor,
+  catalogTrekId: string,
+  fields: { difficulty?: Difficulty | null | undefined; maxAltitudeM?: number | null | undefined },
+) {
+  if (!fields.difficulty && !fields.maxAltitudeM) return;
+  await tx
+    .update(catalogTreks)
+    .set({
+      difficulty: sql`coalesce(${catalogTreks.difficulty}, ${fields.difficulty ?? null})`,
+      maxAltitudeM: sql`coalesce(${catalogTreks.maxAltitudeM}, ${fields.maxAltitudeM ?? null}::int)`,
+    })
+    .where(eq(catalogTreks.id, catalogTrekId));
+}
+
 function rethrowTrekWriteError(err: unknown, slug?: string): never {
   const constraint = pgConstraintName(err);
   if (constraint === 'organizer_treks_org_slug_uq') {
-    throw conflict(`You already have a trek with slug "${slug}"`);
+    throw conflict(`You already list a trek called "${slug}". Edit that one, or use another name.`);
   }
   if (constraint === 'organizer_treks_catalog_required_ck') {
     throw conflict('Link a published catalog trek before publishing this trek');
@@ -319,6 +341,9 @@ export async function createTrek(
 
   const row = await db.transaction(async (tx) => {
     const link = await resolveCatalogLink(tx, organizerId, fields);
+    if (link.catalogTrekId) {
+      await fillCatalogBlanks(tx, link.catalogTrekId, fields);
+    }
     let created: TrekRow;
     try {
       [created] = (await tx

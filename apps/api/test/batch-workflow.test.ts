@@ -164,6 +164,66 @@ describe('one-form trek creation', () => {
   });
 });
 
+describe('trek basics: difficulty, altitude, start point, day-0 itinerary', () => {
+  it('saves them, publishes without a batch, and fills blanks on the destination', async () => {
+    const { headers, tag } = await orgWithOwner();
+    const place = `Kodachadri ${tag}`;
+    const res = await call('POST', '/treks', headers, {
+      title: place,
+      catalogTrekName: place,
+      durationDays: 2,
+      difficulty: 'moderate',
+      maxAltitudeM: 1343,
+      startPoint: 'Bengaluru',
+      itinerary: [
+        { day: 0, title: 'Overnight bus from Bengaluru' },
+        { day: 1, title: 'Trek to the peak', details: 'Start 6 am from the base village' },
+        { day: 2, title: 'Sunrise and descend' },
+      ],
+      publish: true,
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.json()).toMatchObject({
+      status: 'published',
+      difficulty: 'moderate',
+      maxAltitudeM: 1343,
+      startPoint: 'Bengaluru',
+      itinerary: [{ day: 0 }, { day: 1, details: 'Start 6 am from the base village' }, { day: 2 }],
+    });
+
+    const destination = async () =>
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/v1/treks/${res.json().catalogTrekName.toLowerCase().replace(/\s+/g, '-')}`,
+        })
+      ).json();
+    expect(await destination()).toMatchObject({ difficulty: 'moderate', maxAltitudeM: 1343 });
+
+    // A second organizer's values don't overwrite the destination's.
+    const other = await orgWithOwner();
+    const second = await call('POST', '/treks', other.headers, {
+      title: place,
+      catalogTrekName: place,
+      difficulty: 'difficult',
+      maxAltitudeM: 1500,
+    });
+    expect(second.statusCode, second.body).toBe(201);
+    expect(second.json()).toMatchObject({ difficulty: 'difficult', maxAltitudeM: 1500 });
+    expect(await destination()).toMatchObject({ difficulty: 'moderate', maxAltitudeM: 1343 });
+  });
+
+  it('rejects an unknown difficulty', async () => {
+    const { headers, tag } = await orgWithOwner();
+    const res = await call('POST', '/treks', headers, {
+      title: `Odd ${tag}`,
+      catalogTrekName: `Odd ${tag}`,
+      difficulty: 'extreme',
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
 describe('batch names', () => {
   it('numbers batches of the same trek on the same day, and starts again on a new day', async () => {
     const { headers, tag } = await orgWithOwner();

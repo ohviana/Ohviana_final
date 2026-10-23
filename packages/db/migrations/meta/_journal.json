@@ -71,6 +71,13 @@
       "when": 1792502709349,
       "tag": "0009_phone_otps",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792787100299,
+      "tag": "0010_organizer_trek_basics",
+      "breakpoints": true
     }
   ]
 }

@@ -92,6 +92,7 @@ export function visibleBatchesQuery(db: Database) {
         slug: organizerTreks.slug,
         summary: organizerTreks.summary,
         durationDays: organizerTreks.durationDays,
+        startPoint: organizerTreks.startPoint,
         itinerary: organizerTreks.itinerary,
         inclusions: organizerTreks.inclusions,
         exclusions: organizerTreks.exclusions,

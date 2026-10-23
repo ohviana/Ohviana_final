@@ -1803,6 +1803,11 @@ dd {
     height: 32px;
   }
 
+  /* Console header on phones: the email is on My bookings / the dashboard; keep Sign out. */
+  .nav .nav-who {
+    display: none;
+  }
+
   /* No room on phones; organizers find it in the home page banner and the footer. */
   .nav a.nav-quiet {
     display: none;
@@ -2345,4 +2350,244 @@ dd {
 
 .traveller-table tr.is-cancelled td:last-child {
   text-decoration: none;
+}
+
+/* ---------- Add-trek form ---------- */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.form-section {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/* The trek name: the one field everything else hangs off. */
+.field-big label {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.field-big .input-icon input {
+  min-height: 64px;
+  font-size: 1.35rem;
+  font-weight: 650;
+}
+
+.two-up {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+}
+
+.day-list {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.day-box {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.day-badge {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 52px;
+  padding: 6px 0;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  line-height: 1.1;
+}
+
+.day-badge span {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.day-badge strong {
+  font-size: 1.35rem;
+}
+
+.photo-slots {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.photo-slot {
+  position: relative;
+  margin: 0;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.photo-slot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.photo-slot .badge {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+}
+
+.photo-slot.empty {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  border: 1.5px dashed var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.photo-slot.empty:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+button.photo-remove {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  min-height: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+}
+
+button.photo-remove:hover {
+  background: rgb(0 0 0 / 0.75);
+  box-shadow: none;
+}
+
+@media (max-width: 520px) {
+  .photo-slots {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .day-box {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .day-badge {
+    width: auto;
+    grid-auto-flow: column;
+    gap: 6px;
+    padding: 4px 10px;
+    align-self: flex-start;
+  }
+}
+
+/* ---------- Trek page (organizer): view mode ---------- */
+.fact-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fact-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.trek-more {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.trek-more > summary {
+  cursor: pointer;
+  font-weight: 650;
+  color: var(--accent);
+}
+
+.date-rows {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.date-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.date-row:hover {
+  border-color: var(--accent);
+}
+
+.add-dates {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+button.photo-cover {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  min-height: 0;
+  padding: 4px 10px;
+  border: 0;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  font-size: 0.8rem;
+}
+
+button.photo-cover:hover {
+  background: rgb(0 0 0 / 0.75);
+  box-shadow: none;
+}
+
+@media (max-width: 520px) {
+  .date-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
 }

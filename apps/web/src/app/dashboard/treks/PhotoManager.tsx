@@ -1,16 +1,17 @@
 'use client';
 
-import { useRef, useState, type DragEvent } from 'react';
+import { useRef, useState } from 'react';
 import { ErrorResponse, OrganizerTrek, type TrekPhoto } from '@ohviana/contracts';
-import { PHOTO_CATEGORIES, type PhotoCategory } from '@ohviana/shared';
+import type { PhotoCategory } from '@ohviana/shared';
 import { Icon } from '@/components/Icon';
 import { useOrg } from '@/components/dash/org-context';
 import { Outcome } from '@/components/dash/ui';
-import { mediaUrl, PHOTO_CATEGORY_LABELS } from '@/lib/media';
+import { mediaUrl } from '@/lib/media';
 import { authHeader } from '@/lib/session';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
-export const MAX_PHOTOS = 20;
+/** Photos per trek, the same as on the add-trek form. The first is the cover. */
+export const MAX_PHOTOS = 3;
 export const MAX_BYTES = 10 * 1024 * 1024;
 
 /** Uploads one photo (multipart: category and caption fields must precede the file). */
@@ -38,8 +39,8 @@ export async function uploadTrekPhoto(
 }
 
 /**
- * Trek gallery: upload (drag & drop or pick several), tag each photo (destination, transport,
- * stay…), caption, reorder and delete. Uploads run one after another with live progress.
+ * Trek photos as up to three slots, the first being the cover. Read-only it just shows them;
+ * writable adds an "Add photo" slot, remove buttons and "Make cover".
  */
 export function PhotoManager({
   trek,
@@ -52,214 +53,135 @@ export function PhotoManager({
 }) {
   const { call, org } = useOrg();
   const input = useRef<HTMLInputElement>(null);
-  const [category, setCategory] = useState<PhotoCategory>('destination');
-  const [dragging, setDragging] = useState(false);
-  const [progress, setProgress] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const photos = trek.photos;
 
-  const uploadOne = (file: File) => uploadTrekPhoto(trek.id, org.organizerId, file, category);
-
-  async function uploadFiles(list: FileList | File[]) {
+  async function upload(list: FileList) {
     setError(null);
-    const files = [...list].filter(
-      (f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic)$/i.test(f.name),
-    );
-    if (files.length === 0) return setError('Choose JPEG, PNG or WebP photos.');
-    const room = MAX_PHOTOS - photos.length;
-    if (room <= 0) return setError(`A trek can have up to ${MAX_PHOTOS} photos.`);
-    const queue = files.slice(0, room);
+    const files = [...list]
+      .filter((f) => f.type.startsWith('image/'))
+      .slice(0, Math.max(0, MAX_PHOTOS - photos.length));
     const problems: string[] = [];
-    for (const [i, file] of queue.entries()) {
-      setProgress(`Uploading ${i + 1} of ${queue.length}…`);
+    for (const [i, file] of files.entries()) {
       if (file.size > MAX_BYTES) {
         problems.push(`${file.name}: larger than 10 MB`);
         continue;
       }
+      setBusy(`Uploading ${i + 1} of ${files.length}…`);
       try {
-        onChange(await uploadOne(file));
+        onChange(await uploadTrekPhoto(trek.id, org.organizerId, file, 'destination'));
       } catch (err) {
         problems.push(`${file.name}: ${err instanceof Error ? err.message : 'failed'}`);
       }
     }
-    setProgress(null);
-    if (files.length > room)
-      problems.push(`Only ${room} more photo(s) fit; the rest were skipped.`);
+    setBusy(null);
     if (problems.length) setError(problems.join(' · '));
     if (input.current) input.current.value = '';
   }
 
-  async function patch(photo: TrekPhoto, body: Record<string, unknown>) {
+  async function run(label: string, fn: () => Promise<OrganizerTrek>) {
+    setError(null);
+    setBusy(label);
     try {
-      onChange(
-        await call(`/treks/${trek.id}/photos/${photo.id}`, OrganizerTrek, {
-          method: 'PATCH',
-          body,
-        }),
-      );
+      onChange(await fn());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save');
+    } finally {
+      setBusy(null);
     }
   }
 
-  async function remove(photo: TrekPhoto) {
-    if (!confirm('Delete this photo?')) return;
-    try {
-      onChange(
-        await call(`/treks/${trek.id}/photos/${photo.id}`, OrganizerTrek, { method: 'DELETE' }),
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not delete');
-    }
-  }
+  const remove = (photo: TrekPhoto) =>
+    confirm('Remove this photo?') &&
+    run('Removing…', () =>
+      call(`/treks/${trek.id}/photos/${photo.id}`, OrganizerTrek, { method: 'DELETE' }),
+    );
 
-  /** Swap positions with the neighbour (positions are renumbered so order is explicit). */
-  async function move(index: number, delta: -1 | 1) {
-    const target = index + delta;
-    if (target < 0 || target >= photos.length) return;
-    const a = photos[index]!;
-    const b = photos[target]!;
-    await patch(a, { sortOrder: target });
-    await patch(b, { sortOrder: index });
-  }
+  /** Moves `photo` first; the others keep their order behind it. */
+  const makeCover = (photo: TrekPhoto) =>
+    run('Saving…', async () => {
+      const order = [photo, ...photos.filter((p) => p.id !== photo.id)];
+      let latest = trek;
+      for (const [i, p] of order.entries()) {
+        latest = await call(`/treks/${trek.id}/photos/${p.id}`, OrganizerTrek, {
+          method: 'PATCH',
+          body: { sortOrder: i },
+        });
+      }
+      return latest;
+    });
 
-  function onDrop(e: DragEvent) {
-    e.preventDefault();
-    setDragging(false);
-    if (writable && e.dataTransfer.files.length) void uploadFiles(e.dataTransfer.files);
+  if (!writable && photos.length === 0) {
+    return (
+      <div className="photo-slots">
+        <div className="photo-slot empty" aria-hidden="true">
+          <Icon name="sparkle" size={20} />
+          <span>No photos yet</span>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <section className="card stack">
-      <div className="spread">
-        <h2 className="cluster" style={{ gap: 8, margin: 0 }}>
-          <Icon name="sparkle" /> Photos
-        </h2>
-        <span className="small muted">
-          {photos.length}/{MAX_PHOTOS} · treks with photos get far more bookings
-        </span>
-      </div>
-
+    <div className="stack" style={{ gap: 8 }}>
       {writable && (
-        <div
-          className={`dropzone ${dragging ? 'active' : ''}`}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-        >
-          <span className="icon-circle">
-            <Icon name="download" size={22} style={{ transform: 'rotate(180deg)' }} />
-          </span>
-          <strong>Drag photos here, or choose files</strong>
+        <div className="spread">
+          <h2 style={{ margin: 0 }}>Photos</h2>
           <span className="small muted">
-            Destination views, the trail, your bus or jeep, stays, food, happy groups. JPEG / PNG /
-            WebP, up to 10 MB each. Location data is removed automatically.
+            {busy ?? `${photos.length}/${MAX_PHOTOS} · the first is the cover`}
           </span>
-          <div className="cluster" style={{ justifyContent: 'center' }}>
-            <label className="small" htmlFor="photo-category">
-              These photos show
-            </label>
-            <select
-              id="photo-category"
-              value={category}
-              onChange={(e) => setCategory(e.target.value as PhotoCategory)}
-              style={{ width: 'auto', minHeight: 40 }}
-            >
-              {PHOTO_CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {PHOTO_CATEGORY_LABELS[c]}
-                </option>
-              ))}
-            </select>
-            <button type="button" disabled={!!progress} onClick={() => input.current?.click()}>
-              {progress ?? 'Choose photos'}
-            </button>
+        </div>
+      )}
+      <div className="photo-slots">
+        {photos.map((p, i) => (
+          <figure key={p.id} className="photo-slot">
+            <img src={mediaUrl(p.thumbUrl)} alt={p.caption ?? `${trek.title} photo ${i + 1}`} />
+            {i === 0 && <span className="badge glass">Cover</span>}
+            {writable && (
+              <>
+                <button
+                  type="button"
+                  className="photo-remove"
+                  aria-label={`Remove photo ${i + 1}`}
+                  disabled={!!busy}
+                  onClick={() => void remove(p)}
+                >
+                  <Icon name="x" size={16} />
+                </button>
+                {i > 0 && (
+                  <button
+                    type="button"
+                    className="photo-cover small"
+                    disabled={!!busy}
+                    onClick={() => void makeCover(p)}
+                  >
+                    Make cover
+                  </button>
+                )}
+              </>
+            )}
+          </figure>
+        ))}
+        {writable && photos.length < MAX_PHOTOS && (
+          <label className="photo-slot empty" htmlFor={`photos-${trek.id}`}>
+            <Icon name="download" size={22} style={{ transform: 'rotate(180deg)' }} />
+            <span>{busy ?? 'Add photo'}</span>
             <input
               ref={input}
+              id={`photos-${trek.id}`}
               type="file"
               accept="image/jpeg,image/png,image/webp"
               multiple
               hidden
-              aria-label="Upload photos"
-              onChange={(e) => e.target.files && void uploadFiles(e.target.files)}
+              disabled={!!busy}
+              onChange={(e) => e.target.files && void upload(e.target.files)}
             />
-          </div>
-        </div>
-      )}
-
+          </label>
+        )}
+      </div>
+      {writable && <span className="hint">JPEG, PNG or WebP, up to 10 MB each.</span>}
       <Outcome error={error} />
-
-      {photos.length > 0 && (
-        <div className="photo-grid">
-          {photos.map((p, i) => (
-            <div key={p.id} className="photo-tile">
-              <img
-                src={mediaUrl(p.thumbUrl)}
-                alt={p.caption ?? PHOTO_CATEGORY_LABELS[p.category]}
-                loading="lazy"
-              />
-              <div className="tile-body">
-                {writable ? (
-                  <>
-                    <select
-                      aria-label="Category"
-                      value={p.category}
-                      onChange={(e) => void patch(p, { category: e.target.value })}
-                    >
-                      {PHOTO_CATEGORIES.map((c) => (
-                        <option key={c} value={c}>
-                          {PHOTO_CATEGORY_LABELS[c]}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      aria-label="Caption"
-                      placeholder="Add a caption"
-                      defaultValue={p.caption ?? ''}
-                      maxLength={200}
-                      onBlur={(e) => {
-                        if (e.target.value !== (p.caption ?? ''))
-                          void patch(p, { caption: e.target.value || null });
-                      }}
-                    />
-                    <div className="spread">
-                      <span className="cluster" style={{ gap: 4 }}>
-                        <button
-                          type="button"
-                          className="small secondary"
-                          aria-label="Move earlier"
-                          disabled={i === 0}
-                          onClick={() => void move(i, -1)}
-                        >
-                          ←
-                        </button>
-                        <button
-                          type="button"
-                          className="small secondary"
-                          aria-label="Move later"
-                          disabled={i === photos.length - 1}
-                          onClick={() => void move(i, 1)}
-                        >
-                          →
-                        </button>
-                      </span>
-                      <button type="button" className="small danger" onClick={() => void remove(p)}>
-                        Delete
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <span className="badge">{PHOTO_CATEGORY_LABELS[p.category]}</span>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {photos.length === 0 && !writable && <p className="muted small">No photos yet.</p>}
-    </section>
+    </div>
   );
 }

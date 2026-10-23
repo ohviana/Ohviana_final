@@ -5,8 +5,8 @@ import { enterPhoneCode, testPhone } from './phone';
 
 /**
  * Full operator walkthrough through the real UI with email + password accounts:
- * organizer signs up and registers → admin approves → organizer adds a trek in one form and
- * publishes its first batch → repeats the batch a week later → shares the batch's link → a guest
+ * organizer signs up and registers → admin approves → organizer adds a trek, adds its first date and
+ * publishes it → repeats the batch a week later → shares the batch's link → a guest
  * books through it → organizer adds phone bookings to the batch and sees the totals.
  *
  * Needs NEXT_PUBLIC_AUTH_MODE=password and AUTH_JWT_SECRET on the API.
@@ -108,27 +108,42 @@ test('organizer + admin walkthrough, end to end', async ({ page }) => {
   await page.goto('/dashboard/treks');
   await page.getByRole('link', { name: 'New trek' }).click();
   await page.waitForURL(/\/dashboard\/treks\/new$/);
-  await page.getByLabel('Trek name').fill(`Kudremukh Sunrise ${tag}`);
-  await page.getByLabel('Destination / peak').fill('Kudremukh');
-  await page.getByLabel(/^Itinerary/).fill('Overnight bus from Bengaluru\nSummit and return');
+  // The trek name is the destination: the seed's Kudremukh is reused.
+  await page.getByLabel('Trek name').fill('Kudremukh');
+  await page.getByLabel('Duration').selectOption('2');
+  await page.getByLabel('Difficulty').selectOption('moderate');
+  await page.getByLabel('Start point').fill('Bengaluru');
+  await page.getByLabel('Day 0 title').fill('Overnight bus from Bengaluru');
+  await page.getByLabel('Day 1 title').fill('Summit and return');
   await page.getByLabel(/^Included/).fill('Transport\nBreakfast and lunch\nForest permit');
-  await page.getByLabel(/^Cancellation policy/).fill('Full refund up to 7 days before departure.');
-  // A "transport" photo (any real image will do: a screenshot saved as JPEG).
+  await page.locator('#nt-policy').fill('Full refund up to 7 days before departure.');
+  // Any real image will do: a screenshot saved as JPEG.
   const image = await page.screenshot({ type: 'jpeg', quality: 60 });
   await page
     .locator('#nt-photos')
     .setInputFiles({ name: 'bus.jpg', mimeType: 'image/jpeg', buffer: image });
-  await page.getByLabel('What bus.jpg shows').selectOption('transport');
-  await page.getByLabel('Pickup 1').fill('Majestic Bus Stand');
-  await page.getByLabel('Pickup time (IST)').fill(istLocal(10, '21:00'));
-  await page.getByLabel('Departure (IST)').fill(istLocal(10, '21:30'));
-  await page.getByLabel('Return (IST)').fill(istLocal(12, '06:00'));
+  await page.getByRole('button', { name: 'Publish trek' }).click();
+  await page.waitForURL(/\/dashboard\/treks\/[0-9a-f-]+\?created=published/);
+  await expect(page.getByText('Trek published. Add its dates below')).toBeVisible();
+  await expect(page.locator('.photo-slot img')).toHaveCount(1);
+
+  // Dates are added on the trek page (as a draft), then published from Batches.
+  await page.getByRole('button', { name: '+ Add dates' }).click();
+  await page.getByLabel('First departure').fill(istLocal(10, '21:30'));
+  await page.getByLabel('Return', { exact: true }).fill(istLocal(12, '06:00'));
   await page.getByLabel('Price per person (₹)').fill('2499');
   await page.getByLabel('Seats', { exact: true }).fill('12');
-  await page.getByRole('button', { name: 'Publish' }).click();
-  await page.waitForURL(/\/dashboard\/treks\/[0-9a-f-]+\?created=published/);
-  await expect(page.getByText('its first batch is live')).toBeVisible();
-  await expect(page.locator('.photo-tile select').first()).toHaveValue('transport');
+  await page.getByRole('button', { name: /Create draft batch/ }).click();
+  await page.getByRole('link', { name: 'Go to drafts →' }).click();
+  await page.waitForURL(/view=draft/);
+  await page
+    .getByRole('row')
+    .filter({ hasText: 'Kudremukh' })
+    .getByRole('button', { name: 'Publish' })
+    .click();
+  await expect(
+    page.getByRole('row').filter({ hasText: 'Kudremukh' }).getByRole('button', { name: 'Publish' }),
+  ).toHaveCount(0);
 
   // 4. The batch got a generated name; run it again a week later (published straight away).
   // Batch names capitalise each word of the organizer name, so the tag too.

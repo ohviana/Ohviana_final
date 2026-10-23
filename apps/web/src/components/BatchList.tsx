@@ -70,6 +70,7 @@ export function BatchList({
                 <Icon name="clock" size={14} />
                 <span>
                   Departs {dateTime(b.departureAt)} · {durationLabel(b.departureAt, b.returnAt)}
+                  {b.trek.startPoint && ` · from ${b.trek.startPoint}`}
                 </span>
               </span>
             </div>

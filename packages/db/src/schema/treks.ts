@@ -11,7 +11,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { CONTENT_STATUSES } from '@ohviana/shared';
+import { CONTENT_STATUSES, DIFFICULTIES } from '@ohviana/shared';
 import { createdAt, id, inList, isSlug, updatedAt } from './_helpers';
 import { catalogTrekRequests, catalogTreks } from './catalog';
 import { organizers } from './organizers';
@@ -37,6 +37,11 @@ export const organizerTreks = pgTable(
     slug: text('slug').notNull(),
     summary: text('summary'),
     durationDays: integer('duration_days'),
+    /** This organizer's route can differ from the catalog's (e.g. a harder approach). */
+    difficulty: text('difficulty', { enum: DIFFICULTIES }),
+    maxAltitudeM: integer('max_altitude_m'),
+    /** Where the trip starts, e.g. "Bengaluru" (pickup points are set per batch). */
+    startPoint: text('start_point'),
     itinerary: jsonb('itinerary').$type<ItineraryDay[]>().notNull().default([]),
     inclusions: jsonb('inclusions').$type<string[]>().notNull().default([]),
     exclusions: jsonb('exclusions').$type<string[]>().notNull().default([]),
@@ -53,6 +58,8 @@ export const organizerTreks = pgTable(
     unique('organizer_treks_id_org_uq').on(t.id, t.organizerId),
     index('organizer_treks_catalog_idx').on(t.catalogTrekId, t.status),
     check('organizer_treks_status_ck', inList(t.status, CONTENT_STATUSES)),
+    check('organizer_treks_difficulty_ck', inList(t.difficulty, DIFFICULTIES)),
+    check('organizer_treks_altitude_ck', sql`${t.maxAltitudeM} is null or ${t.maxAltitudeM} > 0`),
     check('organizer_treks_slug_ck', isSlug(t.slug)),
     check(
       'organizer_treks_catalog_required_ck',
