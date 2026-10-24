@@ -1,24 +1,33 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { PublicOrganizerList, PublicTrekList } from '@ohviana/contracts';
+import { PublicBatchList, PublicOrganizerList } from '@ohviana/contracts';
 import { DIFFICULTIES } from '@ohviana/shared';
+import { DepartureGroups } from '@/components/DepartureGroups';
 import { Icon } from '@/components/Icon';
 import { SearchForm } from '@/components/SearchForm';
-import { TrekCard } from '@/components/TrekCard';
 import { ApiError, apiFetch, qs } from '@/lib/api';
 import { isoDay, one, searchText, type SearchParams } from '@/lib/params';
 
 export const metadata: Metadata = {
-  title: 'Search treks',
+  title: 'Explore treks',
   // Result pages for arbitrary queries shouldn't be indexed; trek pages are the canonical ones.
   robots: { index: false, follow: true },
 };
 
+/** Departures fetched per page; grouped by day on screen. */
+const PAGE = 60;
+
+/**
+ * Explore: upcoming departures across every trek, grouped by day, one card per organizer's
+ * departure. Filter by text (trek, area, organizer), one date, or the home page chips
+ * (`from`/`to` for "This weekend", `difficulty`, `district`).
+ */
 export default async function SearchPage({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
   const query = searchText(sp.query);
-  const from = isoDay(sp.from);
-  const to = isoDay(sp.to);
+  const date = isoDay(sp.date);
+  const from = date ?? isoDay(sp.from);
+  const to = date ?? isoDay(sp.to);
   const cursor = one(sp.cursor);
   const difficultyRaw = one(sp.difficulty);
   const difficulty = DIFFICULTIES.includes(difficultyRaw as never) ? difficultyRaw : undefined;
@@ -26,10 +35,10 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
   const district = one(sp.district)?.trim().slice(0, 80) || undefined;
 
   let error: string | null = null;
-  const [treks, organizers] = await Promise.all([
+  const [departures, organizers] = await Promise.all([
     apiFetch(
-      `/v1/treks${qs({ query, from, to, difficulty, district, cursor, limit: 24 })}`,
-      PublicTrekList,
+      `/v1/batches${qs({ query, from, to, difficulty, district, cursor, limit: PAGE })}`,
+      PublicBatchList,
       { next: { revalidate: 30 } },
     ).catch((err: unknown) => {
       error =
@@ -45,8 +54,12 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
       : Promise.resolve(null),
   ]);
 
-  const dateQuery = qs({ from, to });
-  const hasDates = !!(from || to);
+  const filtered = !!(query || from || to || difficulty || district);
+  const chips = [
+    district && { icon: 'pin' as const, text: `Area: ${district}` },
+    difficulty && { icon: 'check' as const, text: `Difficulty: ${difficulty}` },
+    !date && (from || to) && { icon: 'calendar' as const, text: 'Selected dates' },
+  ].filter((c): c is { icon: 'pin' | 'check' | 'calendar'; text: string } => !!c);
 
   return (
     <div className="container stack-lg">
@@ -61,27 +74,20 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
                 : 'Explore treks'}
         </h1>
         <div className="card">
-          <SearchForm query={query} from={from} to={to} difficulty={difficulty} />
-          {(difficulty || district) && (
+          <SearchForm query={query} date={date} difficulty={difficulty} />
+          {chips.length > 0 && (
             <div className="chips">
-              {district && (
+              {chips.map((c) => (
                 <span
+                  key={c.text}
                   className="chip"
                   style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
                 >
-                  <Icon name="pin" size={14} /> Area: {district}
+                  <Icon name={c.icon} size={14} /> {c.text}
                 </span>
-              )}
-              {difficulty && (
-                <span
-                  className="chip"
-                  style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
-                >
-                  <Icon name="check" size={14} /> Difficulty: {difficulty}
-                </span>
-              )}
-              <Link className="chip" href={`/search${qs({ query, from, to })}`}>
-                Clear {difficulty && district ? 'filters' : 'filter'}
+              ))}
+              <Link className="chip" href={`/search${qs({ query, date })}`}>
+                Clear {chips.length > 1 ? 'filters' : 'filter'}
               </Link>
             </div>
           )}
@@ -108,33 +114,44 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
         </section>
       )}
 
-      {treks && (
-        <section className="stack">
-          <h2>
-            Treks{hasDates && <span className="muted small"> with departures in your dates</span>}
-          </h2>
-          {treks.items.length === 0 ? (
-            <p className="muted">
-              No treks match{hasDates ? ' those dates' : ''}. Try a different name
-              {hasDates ? ' or widen the dates' : ''}.
-            </p>
-          ) : (
-            <div className="grid-cards">
-              {treks.items.map((t) => (
-                <TrekCard key={t.id} trek={t} dateQuery={dateQuery} />
-              ))}
-            </div>
-          )}
-          {treks.nextCursor && (
-            <Link
-              className="btn secondary"
-              href={`/search${qs({ query, from, to, difficulty, district, cursor: treks.nextCursor })}`}
-            >
-              More treks
-            </Link>
-          )}
-        </section>
-      )}
+      {departures &&
+        (departures.items.length === 0 ? (
+          <div className="empty-state">
+            <span className="icon-circle">
+              <Icon name="calendar" size={26} />
+            </span>
+            <strong>No departures {filtered ? 'match' : 'yet'}</strong>
+            <span className="muted small">
+              {filtered ? 'Try another date, or clear the filters.' : 'Check back soon.'}
+            </span>
+            {filtered && (
+              <Link href="/search" className="btn secondary small">
+                See all departures
+              </Link>
+            )}
+          </div>
+        ) : (
+          <section className="stack">
+            <DepartureGroups batches={departures.items} />
+            {departures.nextCursor && (
+              <Link
+                className="btn secondary"
+                style={{ alignSelf: 'flex-start' }}
+                href={`/search${qs({
+                  query,
+                  date,
+                  from: date ? undefined : from,
+                  to: date ? undefined : to,
+                  difficulty,
+                  district,
+                  cursor: departures.nextCursor,
+                })}`}
+              >
+                Later departures →
+              </Link>
+            )}
+          </section>
+        ))}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, ilike, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, gt, ilike, inArray, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
 import {
   batches,
   catalogTreks,
@@ -12,10 +12,10 @@ import type {
   OrganizerSearchQuery,
   PublicBatch,
   PublicBatchQuery,
-  PublicOrganizer,
+  PublicOrganizerDetail,
   PublicTrekDetail,
   PublicTrekSummary,
-  TrekDateList,
+  BatchSearchQuery,
   TrekSearchQuery,
 } from '@ohviana/contracts';
 import { escapeLike } from '@ohviana/shared';
@@ -183,45 +183,27 @@ async function publishedTrekId(db: Database, slug: string): Promise<string> {
   return trek.id;
 }
 
+/** Departures across every trek: the Explore page, grouped by day on the client. */
+export async function searchBatches(db: Database, q: BatchSearchQuery) {
+  const filters: SQL[] = [];
+  if (q.query) {
+    filters.push(
+      or(
+        fuzzyName(catalogTreks.name, q.query),
+        fuzzyName(organizers.name, q.query),
+        ilike(catalogTreks.district, `%${escapeLike(q.query)}%`),
+        ilike(organizerTreks.title, `%${escapeLike(q.query)}%`),
+      )!,
+    );
+  }
+  if (q.district) filters.push(ilike(catalogTreks.district, escapeLike(q.district)));
+  if (q.difficulty) filters.push(eq(catalogTreks.difficulty, q.difficulty));
+  return listVisibleBatches(db, q, filters.length ? and(...filters)! : sql`true`);
+}
+
 /** Compare departures of one canonical trek across approved organizers. */
 export async function trekBatches(db: Database, slug: string, q: PublicBatchQuery) {
   return listVisibleBatches(db, q, eq(catalogTreks.id, await publishedTrekId(db, slug)));
-}
-
-/** Upcoming departure days shown before a date is picked; a year ahead is plenty. */
-const MAX_TREK_DATES = 120;
-
-/** A trek's upcoming departure days (IST), summarised across organizers, soonest first. */
-export async function trekDates(db: Database, slug: string): Promise<TrekDateList> {
-  const trekId = await publishedTrekId(db, slug);
-  const now = new Date();
-  const day = sql<string>`to_char(${batches.departureAt} at time zone 'Asia/Kolkata', 'YYYY-MM-DD')`;
-  const bookable = sql`(${batches.confirmedSeats} < ${batches.capacity} and ${batches.bookingCutoffAt} > ${now.toISOString()}::timestamptz)`;
-  const rows = await db
-    .select({
-      date: day,
-      departureCount: sql<number>`count(*)::int`,
-      organizerCount: sql<number>`count(distinct ${batches.organizerId})::int`,
-      bookable: sql<boolean>`bool_or(${bookable})`,
-      minPricePaise: sql<
-        number | null
-      >`(min(${batches.pricePaise}) filter (where ${bookable}))::int`,
-      seatsLeft: sql<number>`coalesce(sum(${batches.capacity} - ${batches.confirmedSeats}) filter (where ${bookable}), 0)::int`,
-    })
-    .from(batches)
-    .innerJoin(organizerTreks, eq(organizerTreks.id, batches.organizerTrekId))
-    .innerJoin(organizers, eq(organizers.id, batches.organizerId))
-    .innerJoin(catalogTreks, eq(catalogTreks.id, organizerTreks.catalogTrekId))
-    .where(
-      and(
-        ...visibleBatchConditions({ start: now, end: null }, false, now),
-        eq(catalogTreks.id, trekId),
-      ),
-    )
-    .groupBy(day)
-    .orderBy(day)
-    .limit(MAX_TREK_DATES);
-  return { items: rows };
 }
 
 export async function getPublicBatch(db: Database, id: string): Promise<PublicBatch> {
@@ -282,13 +264,42 @@ export async function searchOrganizers(db: Database, q: OrganizerSearchQuery) {
   return toPage(rows, q.limit, (r) => [r.name, r.id]);
 }
 
-export async function getOrganizer(db: Database, slug: string): Promise<PublicOrganizer> {
+export async function getOrganizer(db: Database, slug: string): Promise<PublicOrganizerDetail> {
   const [row] = await db
-    .select(organizerColumns())
+    .select({ ...organizerColumns(), createdAt: organizers.createdAt })
     .from(organizers)
     .where(and(eq(organizers.slug, slug), eq(organizers.status, 'approved')));
   if (!row) throw notFound('Organizer');
-  return row;
+  const { createdAt, ...organizer } = row;
+
+  // A departure counts once it went ahead (published or completed, not cancelled) and is over.
+  const done = and(
+    eq(batches.organizerId, row.id),
+    inArray(batches.status, ['published', 'completed']),
+    lt(batches.returnAt, new Date()),
+  );
+  const [[track], [offered]] = await Promise.all([
+    db
+      .select({
+        completedBatches: sql<number>`count(*)::int`,
+        trekkersHosted: sql<number>`coalesce(sum(${batches.confirmedSeats}), 0)::int`,
+      })
+      .from(batches)
+      .where(done),
+    db
+      .select({ n: sql<number>`count(distinct ${organizerTreks.catalogTrekId})::int` })
+      .from(organizerTreks)
+      .where(and(eq(organizerTreks.organizerId, row.id), eq(organizerTreks.status, 'published'))),
+  ]);
+  return {
+    ...organizer,
+    stats: {
+      completedBatches: track?.completedBatches ?? 0,
+      trekkersHosted: track?.trekkersHosted ?? 0,
+      treksOffered: offered?.n ?? 0,
+      memberSince: createdAt.getUTCFullYear(),
+    },
+  };
 }
 
 export async function organizerBatches(db: Database, slug: string, q: PublicBatchQuery) {

@@ -15,6 +15,7 @@ import { dummyPasswordHash, hashPassword, verifyPassword } from '../../auth/pass
 import type { OtpSender } from '../../auth/sms';
 import { issueSessionToken } from '../../auth/verifier';
 import { AppError, conflict } from '../../lib/errors';
+import { grantLeadAccess } from '../organizer/leads.service';
 import { sendOtp, verifyOtp } from './otp';
 
 const tags = ['auth'];
@@ -169,6 +170,8 @@ export const authRoutes: FastifyPluginAsyncZod<AuthRoutesOptions> = async (app, 
     },
     async (request) => {
       const user = await verifyOtp(otp, request.body.phone, request.body.code);
+      // Named as a trek lead on some organizer's batches? This sign-in unlocks those batches.
+      await grantLeadAccess(app.db, user.id, user.phone);
       return { ...(await issueSessionToken(opts.secret, user)), user };
     },
   );

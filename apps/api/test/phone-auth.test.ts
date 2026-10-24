@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { phoneOtps, users } from '@ohviana/db';
+import { batches, organizerTreks, phoneOtps, users } from '@ohviana/db';
 import { buildApp } from '../src/app';
 import { createFixtures, testConfig } from './helpers';
 
@@ -141,6 +141,40 @@ describe('phone sign-in with an SMS code', () => {
     const hourly = await send(phone);
     expect(hourly.statusCode).toBe(429);
     expect(hourly.json().error.message).toContain('Too many codes');
+  });
+
+  it('gives a trek lead access to the organizer that named their mobile', async () => {
+    const phone = newPhone();
+    const org = await fx.organizer();
+    const catalog = await fx.catalogTrek();
+    const [trek] = await app.db
+      .insert(organizerTreks)
+      .values({ organizerId: org, catalogTrekId: catalog.id, title: 'Led', slug: `led-${fx.tag}` })
+      .returning();
+    const departureAt = new Date(Date.now() + 10 * 86_400_000);
+    await app.db.insert(batches).values({
+      name: `Test_Batch_${fx.tag}_lead`,
+      organizerTrekId: trek!.id,
+      organizerId: org,
+      departureAt,
+      returnAt: new Date(departureAt.getTime() + 86_400_000),
+      bookingCutoffAt: departureAt,
+      pricePaise: 100,
+      capacity: 5,
+      leads: [{ name: 'Ravi', phone }],
+    });
+
+    await send(phone);
+    const session = (await verify(phone, lastCode(phone))).json();
+    fx.trackUser(session.user.id);
+    const me = await app.inject({
+      method: 'GET',
+      url: '/v1/me',
+      headers: { authorization: `Bearer ${session.accessToken}` },
+    });
+    expect(me.json().memberships).toEqual([
+      expect.objectContaining({ organizerId: org, role: 'trek_lead' }),
+    ]);
   });
 
   it('rejects numbers that are not in E.164 format', async () => {

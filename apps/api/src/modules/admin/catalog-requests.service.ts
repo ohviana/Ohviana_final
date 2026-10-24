@@ -125,7 +125,11 @@ export async function approveCatalogRequest(
 
     const linked = await tx
       .update(organizerTreks)
-      .set({ catalogTrekId })
+      // Treks have no drafts: one waiting for this destination goes live with it.
+      .set({
+        catalogTrekId,
+        status: sql`case when ${organizerTreks.status} = 'draft' then 'published' else ${organizerTreks.status} end`,
+      })
       .where(
         and(
           eq(organizerTreks.catalogTrekRequestId, requestId),

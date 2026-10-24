@@ -112,16 +112,7 @@ export function PhotoManager({
       return latest;
     });
 
-  if (!writable && photos.length === 0) {
-    return (
-      <div className="photo-slots">
-        <div className="photo-slot empty" aria-hidden="true">
-          <Icon name="sparkle" size={20} />
-          <span>No photos yet</span>
-        </div>
-      </div>
-    );
-  }
+  if (!writable) return <PhotoCarousel photos={photos} title={trek.title} />;
 
   return (
     <div className="stack" style={{ gap: 8 }}>
@@ -182,6 +173,48 @@ export function PhotoManager({
       </div>
       {writable && <span className="hint">JPEG, PNG or WebP, up to 10 MB each.</span>}
       <Outcome error={error} />
+    </div>
+  );
+}
+
+/** View mode: the cover, full width; the other photos are a swipe / sideways scroll away. */
+function PhotoCarousel({ photos, title }: { photos: TrekPhoto[]; title: string }) {
+  const [index, setIndex] = useState(0);
+  if (photos.length === 0) {
+    return (
+      <div className="photo-carousel empty" aria-hidden="true">
+        <Icon name="sparkle" size={20} />
+        <span>No photos yet</span>
+      </div>
+    );
+  }
+  return (
+    <div className="photo-carousel">
+      <div
+        className="photo-track"
+        tabIndex={0}
+        aria-label={`${title} photos`}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          setIndex(Math.round(el.scrollLeft / el.clientWidth));
+        }}
+      >
+        {photos.map((p, i) => (
+          <img
+            key={p.id}
+            src={mediaUrl(p.url)}
+            alt={p.caption ?? `${title} photo ${i + 1}`}
+            loading={i === 0 ? 'eager' : 'lazy'}
+          />
+        ))}
+      </div>
+      {index === 0 && <span className="badge glass photo-badge">Cover</span>}
+      {photos.length > 1 && (
+        <span className="photo-count">
+          {index + 1} / {photos.length}
+          {index === 0 && ' · swipe for more'}
+        </span>
+      )}
     </div>
   );
 }

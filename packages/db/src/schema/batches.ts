@@ -6,6 +6,7 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   text,
@@ -18,6 +19,12 @@ import { createdAt, id, inList, ts, updatedAt } from './_helpers';
 import { users } from './identity';
 import { organizers } from './organizers';
 import { organizerTreks, pickupPoints } from './treks';
+
+export interface TripLead {
+  name: string;
+  /** E.164. */
+  phone: string;
+}
 
 /**
  * A dated, bookable departure of an organizer trek. Only batches are bookable.
@@ -41,6 +48,8 @@ export const batches = pgTable(
     maxSeatsPerBooking: integer('max_seats_per_booking').notNull().default(10),
     status: text('status', { enum: BATCH_STATUSES }).notNull().default('draft'),
     notes: text('notes'),
+    /** Who leads this departure on the ground, e.g. [{ name: 'Ravi', phone: '+9198…' }]. */
+    leads: jsonb('leads').$type<TripLead[]>().notNull().default([]),
     publishedAt: ts('published_at'),
     cancelledAt: ts('cancelled_at'),
     cancelReason: text('cancel_reason'),
@@ -59,6 +68,8 @@ export const batches = pgTable(
     index('batches_departure_idx').on(t.status, t.departureAt),
     index('batches_trek_idx').on(t.organizerTrekId, t.departureAt),
     index('batches_org_idx').on(t.organizerId, t.departureAt),
+    // "Which batches does this mobile lead?" (leads @> '[{"phone": …}]').
+    index('batches_leads_idx').using('gin', sql`${t.leads} jsonb_path_ops`),
     check('batches_status_ck', inList(t.status, BATCH_STATUSES)),
     check('batches_dates_ck', sql`${t.returnAt} > ${t.departureAt}`),
     check('batches_cutoff_ck', sql`${t.bookingCutoffAt} <= ${t.departureAt}`),

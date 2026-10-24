@@ -6,6 +6,7 @@ import { useAction } from '@/components/dash/hooks';
 import { Outcome } from '@/components/dash/ui';
 import { authedFetch } from '@/lib/authed';
 import { toE164 } from '@/lib/phone';
+import { LogoInput, logoChoice, uploadLogo, type LogoChoice } from '@/components/LogoInput';
 
 /** Shown to signed-in users who don't belong to any organizer yet. */
 export function RegisterOrganizer({
@@ -21,6 +22,7 @@ export function RegisterOrganizer({
     contactPhone: '',
     gstin: '',
   });
+  const [logo, setLogo] = useState<LogoChoice>(() => logoChoice(null));
   const action = useAction();
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) =>
     setForm({ ...form, [k]: e.target.value });
@@ -29,8 +31,15 @@ export function RegisterOrganizer({
     e.preventDefault();
     const phone = toE164(form.contactPhone);
     if (!phone) return action.setError('Enter a valid contact mobile number.');
-    const created = await action.run(() =>
-      authedFetch('/v1/organizers', OrganizerProfile, {
+    const link = logo.mode === 'link' ? logo.link.trim() : '';
+    if (link && !/^https:\/\/\S+$/.test(link)) {
+      return action.setError('The logo link must start with https://');
+    }
+    const file = logo.mode === 'upload' ? logo.file : null;
+    if (file && file.size > 10 * 1024 * 1024)
+      return action.setError('The logo is larger than 10 MB.');
+    const created = await action.run(async () => {
+      const org = await authedFetch('/v1/organizers', OrganizerProfile, {
         method: 'POST',
         body: {
           name: form.name.trim(),
@@ -39,9 +48,14 @@ export function RegisterOrganizer({
           ...(form.city.trim() ? { city: form.city.trim() } : {}),
           ...(form.tagline.trim() ? { tagline: form.tagline.trim() } : {}),
           ...(form.gstin.trim() ? { gstin: form.gstin.trim() } : {}),
+          ...(link ? { logoUrl: link } : {}),
         },
-      }),
-    );
+      });
+      // An uploaded logo needs the organizer to exist first. A failed upload doesn't undo the
+      // registration; the logo can be added from Profile.
+      if (file) await uploadLogo(org.id, file).catch(() => undefined);
+      return org;
+    });
     if (created) await onRegistered(created.id);
   }
 
@@ -78,6 +92,7 @@ export function RegisterOrganizer({
           </label>
           <input id="r-tagline" maxLength={160} value={form.tagline} onChange={set('tagline')} />
         </div>
+        <LogoInput value={logo} current={null} onChange={setLogo} />
       </fieldset>
       <fieldset className="stack">
         <legend>Contact (private — for Ohviana)</legend>

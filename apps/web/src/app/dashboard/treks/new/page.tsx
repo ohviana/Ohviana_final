@@ -51,8 +51,8 @@ export default function NewTrekPage() {
   const [days, setDays] = useState<ItineraryDrafts>({});
   const [photos, setPhotos] = useState<PhotoRow[]>([]);
   const [progress, setProgress] = useState<string | null>(null);
-  // Pending organizers can prepare treks; they go live once Ohviana approves the organizer.
-  const canPublish = can('batches:publish');
+  // Pending organizers can prepare treks; trekkers see them once Ohviana approves the organizer.
+  const approved = org.status === 'approved';
 
   // Release preview URLs when photos are removed or the page closes.
   const previews = useMemo(() => photos.map((p) => p.preview), [photos]);
@@ -102,7 +102,6 @@ export default function NewTrekPage() {
           exclusions: linesToList(f.exclusions),
           thingsToCarry: linesToList(f.thingsToCarry),
           cancellationPolicy: f.cancellationPolicy.trim() || null,
-          publish: canPublish,
         },
       });
       // The trek exists now; a failed photo shouldn't lose it, so collect problems instead.
@@ -119,7 +118,7 @@ export default function NewTrekPage() {
       return { trek, failed };
     });
     if (!created) return;
-    const params = new URLSearchParams({ created: canPublish ? 'published' : 'draft' });
+    const params = new URLSearchParams({ created: '1' });
     if (created.failed.length) params.set('photosFailed', String(created.failed.length));
     router.push(`/dashboard/treks/${created.trek.id}?${params}`);
   }
@@ -312,15 +311,15 @@ export default function NewTrekPage() {
       <div className="card stack sticky-actions">
         <Outcome error={action.error} />
         {progress && <span className="small muted">{progress}</span>}
-        {!canPublish && (
+        {!approved && (
           <span className="small muted">
-            Your organization is awaiting approval. The trek is saved now and goes live once
+            Your organization is awaiting approval. Your trek is saved; trekkers can book it once
             you&apos;re approved.
           </span>
         )}
         <div className="cluster">
           <button type="submit" disabled={action.pending}>
-            {canPublish ? 'Publish trek' : 'Save trek'} <Icon name="arrowRight" size={16} />
+            Save trek <Icon name="arrowRight" size={16} />
           </button>
           <Link href="/dashboard/treks" className="btn secondary">
             Cancel

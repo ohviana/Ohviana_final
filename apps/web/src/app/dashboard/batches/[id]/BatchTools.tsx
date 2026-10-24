@@ -120,9 +120,11 @@ const blankRow = (): TravellerRow => ({ name: '', phone: '', pickupPointId: '' }
 export function AddMembers({
   batch,
   onAdded,
+  onClose,
 }: {
   batch: OrganizerBatch;
   onAdded: () => Promise<void>;
+  onClose: () => void;
 }) {
   const { call } = useOrg();
   const action = useAction();
@@ -132,7 +134,8 @@ export function AddMembers({
     email: '',
     travelling: true,
     pickupPointId: '',
-    others: [blankRow()],
+    // One traveller (the contact) by default; "+ Add another traveller" adds more.
+    others: [] as TravellerRow[],
     price: paiseToRupees(batch.pricePaise),
   });
   const [f, setF] = useState(blank);
@@ -261,12 +264,21 @@ export function AddMembers({
         <input
           type="checkbox"
           checked={f.travelling}
-          onChange={(e) => setF({ ...f, travelling: e.target.checked })}
+          onChange={(e) =>
+            setF({
+              ...f,
+              travelling: e.target.checked,
+              // Someone has to travel: without the contact, start with one traveller row.
+              others: !e.target.checked && f.others.length === 0 ? [blankRow()] : f.others,
+            })
+          }
         />
         The contact is travelling too {f.travelling && '(traveller 1)'}
       </label>
 
-      <h3 className="form-subhead">{f.travelling ? 'Other travellers' : 'Travellers'}</h3>
+      {f.others.length > 0 && (
+        <h3 className="form-subhead">{f.travelling ? 'Other travellers' : 'Travellers'}</h3>
+      )}
       <div className="stack" style={{ gap: 10 }}>
         {f.others.map((r, i) => {
           const n = first + i;
@@ -311,7 +323,7 @@ export function AddMembers({
                 type="button"
                 className="secondary icon-btn"
                 aria-label={`Remove traveller ${n}`}
-                disabled={f.others.length === 1}
+                disabled={!f.travelling && f.others.length === 1}
                 onClick={() => setF({ ...f, others: f.others.filter((_, j) => j !== i) })}
               >
                 <Icon name="x" size={16} />
@@ -336,9 +348,14 @@ export function AddMembers({
         </div>
       </div>
       <Outcome error={action.error} message={action.message} />
-      <button type="submit" disabled={action.pending} style={{ alignSelf: 'flex-start' }}>
-        {count > 1 ? `Add ${count} people` : 'Add to batch'}
-      </button>
+      <div className="cluster">
+        <button type="submit" disabled={action.pending}>
+          {count > 1 ? `Add ${count} people` : 'Add to batch'}
+        </button>
+        <button type="button" className="link" onClick={onClose}>
+          {action.message ? 'Close' : 'Cancel'}
+        </button>
+      </div>
     </form>
   );
 }
@@ -468,7 +485,7 @@ function nextWeek(iso: string): string {
 }
 
 /** Copy this batch (price, seats, pickups, notes) onto new dates, as draft or published. */
-export function RepeatBatch({ batch }: { batch: OrganizerBatch }) {
+export function RepeatBatch({ batch, onClose }: { batch: OrganizerBatch; onClose: () => void }) {
   const { call, can } = useOrg();
   const router = useRouter();
   const action = useAction();
@@ -530,6 +547,9 @@ export function RepeatBatch({ batch }: { batch: OrganizerBatch }) {
             Save &amp; publish
           </button>
         )}
+        <button type="button" className="link" onClick={onClose}>
+          Cancel
+        </button>
       </div>
     </form>
   );

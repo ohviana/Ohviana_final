@@ -73,66 +73,22 @@ export default function OverviewPage() {
       {summary.loading && !summary.data && <Loading />}
       {summary.data && (
         <>
-          <section className="stack">
-            <h2 style={{ margin: 0 }}>Bookings</h2>
-            <div className="stat-grid">
-              <div className="card stat">
-                <span className="stat-icon">
-                  <Icon name="ticket" />
-                </span>
-                <strong>{summary.data.bookings.confirmed}</strong>
-                <span className="muted small">Confirmed bookings</span>
-              </div>
-              <div className="card stat">
-                <span className="stat-icon">
-                  <Icon name="users" />
-                </span>
-                <strong>{summary.data.bookings.seatsSold}</strong>
-                <span className="muted small">Trekkers booked</span>
-              </div>
-              <div className="card stat">
-                <span className="stat-icon sun">
-                  <Icon name="rupee" />
-                </span>
-                <strong>{price(summary.data.bookings.grossPaise)}</strong>
-                <span className="muted small">Gross bookings</span>
-              </div>
-              <div className="card stat">
-                <span className="stat-icon">
-                  <Icon name="link" />
-                </span>
-                <strong>{price(summary.data.bookings.directGrossPaise)}</strong>
-                <span className="muted small">Your links &amp; added by you (0% commission)</span>
-              </div>
-              <div className="card stat">
-                <span className="stat-icon">
-                  <Icon name="trendingUp" />
-                </span>
-                <strong>{price(summary.data.bookings.marketplaceGrossPaise)}</strong>
-                <span className="muted small">Via Ohviana marketplace</span>
-              </div>
-              <div className="card stat">
-                <span className="stat-icon sun">
-                  <Icon name="building" />
-                </span>
-                <strong>{price(summary.data.bookings.commissionPaise)}</strong>
-                <span className="muted small">Marketplace commission</span>
-              </div>
-            </div>
-          </section>
+          <BookingChannels b={summary.data.bookings} />
 
           <section className="stack">
             <h2 style={{ margin: 0 }}>Batches</h2>
-            <div className="stat-grid">
+            <div className="batch-stats">
               {VIEWS.map(({ view, label, icon, tone }) => (
-                <Link key={view} href={`/dashboard/batches?view=${view}`} className="card stat">
-                  <span className={`stat-icon ${tone ?? ''}`}>
-                    <Icon name={icon} />
-                  </span>
+                <Link
+                  key={view}
+                  href={`/dashboard/batches?view=${view}`}
+                  className={`batch-stat ${tone ?? ''}`}
+                >
+                  <Icon name={icon} size={16} />
                   <strong>
                     {summary.data!.batches[view as keyof typeof summary.data.batches]}
                   </strong>
-                  <span className="muted small">{label}</span>
+                  <span>{label}</span>
                 </Link>
               ))}
             </div>
@@ -140,5 +96,94 @@ export default function OverviewPage() {
         </>
       )}
     </>
+  );
+}
+
+/** Gross and net up top, then bookings per channel: the total first (highlighted). */
+function BookingChannels({ b }: { b: DashboardSummary['bookings'] }) {
+  const { marketplace, directLink, addedByYou } = b.channels;
+  const rows: {
+    key: string;
+    icon: IconName;
+    label: string;
+    hint: string;
+    t: { confirmed: number; seatsSold: number; grossPaise: number; commissionPaise: number };
+  }[] = [
+    { key: 'total', icon: 'ticket', label: 'Total', hint: 'All confirmed bookings', t: b },
+    {
+      key: 'marketplace',
+      icon: 'trendingUp',
+      label: 'Ohviana marketplace',
+      hint: 'Trekkers who found you on Ohviana',
+      t: marketplace,
+    },
+    {
+      key: 'direct',
+      icon: 'link',
+      label: 'Direct links',
+      hint: 'Your booking links · 0% commission',
+      t: directLink,
+    },
+    {
+      key: 'added',
+      icon: 'users',
+      label: 'Added by you',
+      hint: 'Phone, WhatsApp and walk-ins · 0% commission',
+      t: addedByYou,
+    },
+  ];
+  return (
+    <section className="stack">
+      <h2 style={{ margin: 0 }}>Bookings</h2>
+      <div className="money-cards">
+        <div className="card money-card">
+          <span className="muted small">Gross booking value</span>
+          <strong>{price(b.grossPaise)}</strong>
+          <span className="muted small">
+            {b.confirmed} booking{b.confirmed === 1 ? '' : 's'} · {b.seatsSold} trekker
+            {b.seatsSold === 1 ? '' : 's'}
+          </span>
+        </div>
+        <div className="card money-card net">
+          <span className="small">Net earnings</span>
+          <strong>{price(b.grossPaise - b.commissionPaise)}</strong>
+          <span className="small">After {price(b.commissionPaise)} Ohviana commission</span>
+        </div>
+      </div>
+      <div className="channels" role="table" aria-label="Bookings by channel">
+        <div className="channel-row channel-head" role="row">
+          <span role="columnheader">Channel</span>
+          <span role="columnheader">Bookings</span>
+          <span role="columnheader">Gross booking value</span>
+          <span role="columnheader">Commission</span>
+        </div>
+        {rows.map(({ key, icon, label, hint, t }) => (
+          <div key={key} className={`channel-row ${key}`} role="row">
+            <span className="channel-name" role="rowheader">
+              <span className="stat-icon">
+                <Icon name={icon} size={18} />
+              </span>
+              <span className="stack" style={{ gap: 0 }}>
+                <strong>{label}</strong>
+                <span className="muted small">{hint}</span>
+              </span>
+            </span>
+            <span role="cell" data-label="Bookings">
+              <strong>{t.confirmed}</strong>
+              <span className="muted small">
+                {' '}
+                · {t.seatsSold} trekker{t.seatsSold === 1 ? '' : 's'}
+              </span>
+            </span>
+            <span role="cell" data-label="Gross booking value">
+              <strong>{price(t.grossPaise)}</strong>
+            </span>
+            <span role="cell" data-label="Commission">
+              <strong>{price(t.commissionPaise)}</strong>
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

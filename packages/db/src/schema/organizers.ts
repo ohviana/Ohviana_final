@@ -70,5 +70,27 @@ export const organizerMembers = pgTable(
     primaryKey({ columns: [t.organizerId, t.userId] }),
     index('organizer_members_user_idx').on(t.userId),
     check('organizer_members_role_ck', inList(t.role, ORGANIZER_ROLES)),
+    // The owner is the one person who created the organizer; co-owners share their access.
+    uniqueIndex('organizer_members_one_owner_uq')
+      .on(t.organizerId)
+      .where(sql`${t.role} = 'owner'`),
   ],
+).enableRLS();
+
+/**
+ * Trek leads an owner took access away from, by mobile. Signing in again doesn't bring access
+ * back; naming them as a lead on a batch again does (the row is deleted).
+ */
+export const organizerLeadRevocations = pgTable(
+  'organizer_lead_revocations',
+  {
+    organizerId: uuid('organizer_id')
+      .notNull()
+      .references(() => organizers.id, { onDelete: 'cascade' }),
+    /** E.164. */
+    phone: text('phone').notNull(),
+    revokedBy: uuid('revoked_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.organizerId, t.phone] })],
 ).enableRLS();

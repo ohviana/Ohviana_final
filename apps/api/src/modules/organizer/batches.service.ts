@@ -28,6 +28,7 @@ import { BATCH_VIEWS, batchName, deriveBatchView, type BatchView } from '@ohvian
 import { enqueueEvent } from '../../lib/audit';
 import { badRequest, conflict, notFound } from '../../lib/errors';
 import { decodeCursor, toPage } from '../../lib/pagination';
+import { onLeadsSaved } from './leads.service';
 import { newDirectLinkToken } from './links.service';
 import { getTrekRow } from './treks.service';
 
@@ -110,6 +111,7 @@ async function toBatchDtos(
         name: p.name,
         pickupAt: p.pickupAt.toISOString(),
       })),
+    leads: r.leads,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   }));
@@ -130,9 +132,16 @@ export async function getBatch(db: Database, organizerId: string, batchId: strin
 }
 
 /** Ordered by departure (soonest first), keyset-paginated on (departure_at, id). */
-export async function listBatches(db: Database, organizerId: string, q: OrganizerBatchListQuery) {
+export async function listBatches(
+  db: Database,
+  organizerId: string,
+  q: OrganizerBatchListQuery,
+  /** Extra condition, e.g. a trek lead's own batches only. */
+  scope?: SQL,
+) {
   const now = new Date();
   const filters: SQL[] = [eq(batches.organizerId, organizerId)];
+  if (scope) filters.push(scope);
   if (q.view) filters.push(sql`${batchViewSql(now)} = ${q.view}`);
   if (q.trekId) filters.push(eq(batches.organizerTrekId, q.trekId));
   if (q.from) filters.push(gte(batches.departureAt, new Date(q.from)));
@@ -257,6 +266,7 @@ export async function insertBatches(
     capacity: number;
     maxSeatsPerBooking?: number | undefined;
     notes?: string | undefined;
+    leads?: { name: string; phone: string }[] | undefined;
   },
   items: NewBatch[],
 ): Promise<BatchRow[]> {
@@ -278,6 +288,7 @@ export async function insertBatches(
         capacity: common.capacity,
         maxSeatsPerBooking: Math.min(common.maxSeatsPerBooking ?? 10, common.capacity),
         notes: common.notes ?? null,
+        leads: common.leads ?? [],
         status: 'draft' as const,
       })),
     );
@@ -320,11 +331,23 @@ export async function createBatch(
     })),
   };
   validateTimes(item, now);
-  const [row] = await db.transaction((tx) => insertBatches(tx, organizerId, trekId, input, [item]));
+  const [row] = await db.transaction(async (tx) => {
+    const rows = await insertBatches(tx, organizerId, trekId, input, [item]);
+    await onLeadsSaved(
+      tx,
+      organizerId,
+      (input.leads ?? []).map((l) => l.phone),
+      { restore: true },
+    );
+    return rows;
+  });
   return (await toBatchDtos(db, [row!]))[0]!;
 }
 
-/** All-or-nothing: one invalid departure rejects the whole request. */
+/**
+ * All-or-nothing: one invalid departure rejects the whole request. Pickups named for the first
+ * time are added to the trek in the same transaction; `publish` makes every batch bookable.
+ */
 export async function bulkCreateBatches(
   db: Database,
   organizerId: string,
@@ -332,25 +355,101 @@ export async function bulkCreateBatches(
   input: BulkCreateBatchesRequest,
 ) {
   const now = new Date();
-  const items: NewBatch[] = input.departures.map((d, i) => {
-    const departureAt = new Date(d.departureAt);
+  const departures = input.departures.map((d, i) => {
     const item = {
-      departureAt,
+      departureAt: new Date(d.departureAt),
       returnAt: new Date(d.returnAt),
       bookingCutoffAt: new Date(d.bookingCutoffAt ?? d.departureAt),
-      pickups: (input.pickups ?? []).map((p) => ({
-        pickupPointId: p.pickupPointId,
-        pickupAt: new Date(departureAt.getTime() + p.minutesFromDeparture * 60_000),
-      })),
     };
     validateTimes(item, now, `departure #${i + 1}`);
     return item;
   });
-  const starts = items.map((i) => i.departureAt.getTime());
+  const starts = departures.map((d) => d.departureAt.getTime());
   if (new Set(starts).size !== starts.length) throw badRequest('Departures must not repeat');
 
-  const rows = await db.transaction((tx) => insertBatches(tx, organizerId, trekId, input, items));
-  return toBatchDtos(db, rows);
+  const rows = await db.transaction(async (tx) => {
+    const pickups = await resolvePickups(tx, organizerId, trekId, input.pickups ?? []);
+    const items: NewBatch[] = departures.map((d) => ({
+      ...d,
+      pickups: pickups.map((p) => ({
+        pickupPointId: p.pickupPointId,
+        pickupAt: new Date(d.departureAt.getTime() + p.minutesFromDeparture * 60_000),
+      })),
+    }));
+    const created = await insertBatches(tx, organizerId, trekId, input, items);
+    await onLeadsSaved(
+      tx,
+      organizerId,
+      (input.leads ?? []).map((l) => l.phone),
+      { restore: true },
+    );
+    if (input.publish) {
+      for (const row of created) await publishBatchTx(tx, organizerId, row.id);
+    }
+    return created;
+  });
+  // Re-read: publishing changed status and published time.
+  const fresh = await db
+    .select()
+    .from(batches)
+    .where(
+      inArray(
+        batches.id,
+        rows.map((r) => r.id),
+      ),
+    )
+    .orderBy(asc(batches.departureAt));
+  return toBatchDtos(db, fresh);
+}
+
+/** Pickups by id, or by name: an existing point of this trek with that name, else a new one. */
+async function resolvePickups(
+  tx: Tx,
+  organizerId: string,
+  trekId: string,
+  input: NonNullable<BulkCreateBatchesRequest['pickups']>,
+) {
+  if (!input.some((p) => p.name)) {
+    return input.map((p) => ({
+      pickupPointId: p.pickupPointId!,
+      minutesFromDeparture: p.minutesFromDeparture,
+    }));
+  }
+  await getTrekRow(tx, organizerId, trekId);
+  const existing = await tx
+    .select({ id: pickupPoints.id, name: pickupPoints.name, sortOrder: pickupPoints.sortOrder })
+    .from(pickupPoints)
+    .where(eq(pickupPoints.organizerTrekId, trekId));
+  const byName = new Map(existing.map((p) => [p.name.trim().toLowerCase(), p.id]));
+  let nextSort = existing.reduce((m, p) => Math.max(m, p.sortOrder + 1), 0);
+
+  const out: { pickupPointId: string; minutesFromDeparture: number }[] = [];
+  for (const p of input) {
+    if (p.pickupPointId) {
+      out.push({ pickupPointId: p.pickupPointId, minutesFromDeparture: p.minutesFromDeparture });
+      continue;
+    }
+    const key = p.name!.trim().toLowerCase();
+    let id = byName.get(key);
+    if (!id) {
+      const [created] = await tx
+        .insert(pickupPoints)
+        .values({
+          organizerTrekId: trekId,
+          organizerId,
+          name: p.name!.trim(),
+          sortOrder: nextSort++,
+        })
+        .returning({ id: pickupPoints.id });
+      id = created!.id;
+      byName.set(key, id);
+    }
+    out.push({ pickupPointId: id, minutesFromDeparture: p.minutesFromDeparture });
+  }
+  if (new Set(out.map((p) => p.pickupPointId)).size !== out.length) {
+    throw badRequest('Each pickup point can be listed once');
+  }
+  return out;
 }
 
 // ---------- Update ----------
@@ -402,6 +501,7 @@ export async function updateBatch(
         ...(input.pricePaise !== undefined ? { pricePaise: input.pricePaise } : {}),
         ...(input.capacity !== undefined ? { capacity: input.capacity } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
+        ...(input.leads !== undefined ? { leads: input.leads } : {}),
         ...(input.departureAt ? { departureAt: new Date(input.departureAt) } : {}),
         ...(input.returnAt ? { returnAt: new Date(input.returnAt) } : {}),
         ...(input.bookingCutoffAt ? { bookingCutoffAt: new Date(input.bookingCutoffAt) } : {}),
@@ -411,6 +511,14 @@ export async function updateBatch(
         ),
       })
       .where(eq(batches.id, batchId));
+    if (input.leads) {
+      await onLeadsSaved(
+        tx,
+        organizerId,
+        input.leads.map((l) => l.phone),
+        { restore: true },
+      );
+    }
   });
   return getBatch(db, organizerId, batchId);
 }
@@ -556,8 +664,15 @@ export async function repeatBatch(
         capacity: source.capacity,
         maxSeatsPerBooking: source.maxSeatsPerBooking,
         notes: source.notes ?? undefined,
+        leads: source.leads,
       },
       [item],
+    );
+    await onLeadsSaved(
+      tx,
+      organizerId,
+      source.leads.map((l) => l.phone),
+      { restore: false },
     );
     if (input.publish) await publishBatchTx(tx, organizerId, created!.id);
     return created!.id;
@@ -643,7 +758,7 @@ export async function dashboardSummary(
   organizerId: string,
 ): Promise<DashboardSummary> {
   const view = batchViewSql(new Date());
-  const [counts, [money]] = await Promise.all([
+  const [counts, bySource] = await Promise.all([
     db
       .select({ view, n: sql<number>`count(*)::int` })
       .from(batches)
@@ -652,15 +767,15 @@ export async function dashboardSummary(
       .groupBy(sql`1`),
     db
       .select({
+        source: bookings.source,
         confirmed: sql<number>`count(*)::int`,
         seatsSold: sql<number>`coalesce(sum(${bookings.quantity}), 0)::int`,
-        grossPaise: sql<number>`coalesce(sum(${bookings.totalPaise}), 0)::bigint`,
-        marketplaceGrossPaise: sql<number>`coalesce(sum(${bookings.totalPaise}) filter (where ${bookings.source} = 'MARKETPLACE'), 0)::bigint`,
-        directGrossPaise: sql<number>`coalesce(sum(${bookings.totalPaise}) filter (where ${bookings.source} <> 'MARKETPLACE'), 0)::bigint`,
-        commissionPaise: sql<number>`coalesce(sum(${bookings.commissionPaise}), 0)::bigint`,
+        grossPaise: sql<string>`coalesce(sum(${bookings.totalPaise}), 0)::bigint`,
+        commissionPaise: sql<string>`coalesce(sum(${bookings.commissionPaise}), 0)::bigint`,
       })
       .from(bookings)
-      .where(and(eq(bookings.organizerId, organizerId), eq(bookings.status, 'confirmed'))),
+      .where(and(eq(bookings.organizerId, organizerId), eq(bookings.status, 'confirmed')))
+      .groupBy(bookings.source),
   ]);
 
   const batchCounts = Object.fromEntries(BATCH_VIEWS.map((v) => [v, 0])) as Record<
@@ -668,15 +783,28 @@ export async function dashboardSummary(
     number
   >;
   for (const c of counts) batchCounts[c.view] = c.n;
+
+  const totalsOf = (source?: (typeof bySource)[number]['source']) =>
+    bySource
+      .filter((r) => !source || r.source === source)
+      .reduce(
+        (t, r) => ({
+          confirmed: t.confirmed + r.confirmed,
+          seatsSold: t.seatsSold + r.seatsSold,
+          grossPaise: t.grossPaise + Number(r.grossPaise),
+          commissionPaise: t.commissionPaise + Number(r.commissionPaise),
+        }),
+        { confirmed: 0, seatsSold: 0, grossPaise: 0, commissionPaise: 0 },
+      );
   return {
     batches: batchCounts,
     bookings: {
-      confirmed: money!.confirmed,
-      seatsSold: money!.seatsSold,
-      grossPaise: Number(money!.grossPaise),
-      marketplaceGrossPaise: Number(money!.marketplaceGrossPaise),
-      directGrossPaise: Number(money!.directGrossPaise),
-      commissionPaise: Number(money!.commissionPaise),
+      ...totalsOf(),
+      channels: {
+        marketplace: totalsOf('MARKETPLACE'),
+        directLink: totalsOf('ORGANIZER_DIRECT'),
+        addedByYou: totalsOf('ORGANIZER_OFFLINE'),
+      },
     },
   };
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { batches, bookings } from '@ohviana/db';
+import { batches, bookings, users } from '@ohviana/db';
 import type { OrganizerStatus } from '@ohviana/shared';
 import { createFixtures, createTestApp, createTestKeys, type TestApp } from './helpers';
 
@@ -28,7 +28,7 @@ const year = new Date().getUTCFullYear() + 1;
 const ist = (monthDay: string, time = '06:00') => `${year}-${monthDay}T${time}:00+05:30`;
 
 type Headers = Record<string, string>;
-const call = (method: 'GET' | 'POST', url: string, headers: Headers, payload?: object) =>
+const call = (method: 'GET' | 'POST' | 'DELETE', url: string, headers: Headers, payload?: object) =>
   app.inject({ method, url: `/v1/organizer${url}`, headers, ...(payload ? { payload } : {}) });
 
 async function orgWithOwner(status: OrganizerStatus = 'approved', role = 'owner' as const) {
@@ -88,12 +88,12 @@ async function createTrekWithBatch(headers: Headers, place: string, publish: boo
 }
 
 describe('one-form trek creation', () => {
-  it('saves trek, pickups and first batch as drafts', async () => {
+  it('saves the trek live and its first batch as a draft', async () => {
     const { headers, tag } = await orgWithOwner();
     const place = `Kudremukh ${tag}`;
     const { trek, batches: list } = await createTrekWithBatch(headers, place, false);
 
-    expect(trek.status).toBe('draft');
+    expect(trek.status).toBe('published'); // treks have no drafts; the batch does
     expect(trek.pickupPoints).toHaveLength(2);
     expect(list).toHaveLength(1);
     const [b] = list;
@@ -221,6 +221,90 @@ describe('trek basics: difficulty, altitude, start point, day-0 itinerary', () =
       difficulty: 'extreme',
     });
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('add dates: pickups by name, trek leads, draft or publish', () => {
+  async function trekOf(headers: Headers, tag: string) {
+    const res = await call('POST', '/treks', headers, {
+      title: `Leadpeak ${tag}`,
+      catalogTrekName: `Leadpeak ${tag}`,
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    return res.json() as { id: string };
+  }
+  const body = (extra: object) => ({
+    pricePaise: 249_900,
+    capacity: 20,
+    departures: [
+      { departureAt: ist('11-06', '21:30'), returnAt: ist('11-08', '06:00') },
+      { departureAt: ist('11-13', '21:30'), returnAt: ist('11-15', '06:00') },
+    ],
+    ...extra,
+  });
+
+  it('adds new pickup points by name, saves leads, and publishes in one go', async () => {
+    const { headers, tag } = await orgWithOwner();
+    const trek = await trekOf(headers, tag);
+    const res = await call(
+      'POST',
+      `/treks/${trek.id}/batches/bulk`,
+      headers,
+      body({
+        pickups: [
+          { name: 'Majestic', minutesFromDeparture: -30 },
+          { name: 'Silk Board', minutesFromDeparture: 0 },
+        ],
+        leads: [{ name: 'Ravi Kumar', phone: '+919845012345' }],
+        publish: true,
+      }),
+    );
+    expect(res.statusCode, res.body).toBe(201);
+    const items = res.json().items as (Batch & { leads: unknown[] })[];
+    expect(items.map((b) => b.status)).toEqual(['published', 'published']);
+    expect(items[0]!.leads).toEqual([{ name: 'Ravi Kumar', phone: '+919845012345' }]);
+    expect(items[0]!.pickups).toHaveLength(2);
+    expect(items[0]!.pickups[0]!.pickupAt).toBe(
+      new Date(Date.parse(items[0]!.departureAt) - 30 * 60_000).toISOString(),
+    );
+
+    // The names became trek pickup points; using one again reuses it instead of duplicating.
+    const again = await call(
+      'POST',
+      `/treks/${trek.id}/batches/bulk`,
+      headers,
+      body({
+        departures: [{ departureAt: ist('11-20', '21:30'), returnAt: ist('11-22', '06:00') }],
+        pickups: [{ name: 'majestic', minutesFromDeparture: -30 }],
+      }),
+    );
+    expect(again.statusCode, again.body).toBe(201);
+    expect(again.json().items[0].status).toBe('draft');
+    const t = (await call('GET', `/treks/${trek.id}`, headers)).json() as {
+      pickupPoints: { name: string }[];
+    };
+    expect(t.pickupPoints.map((p) => p.name)).toEqual(['Majestic', 'Silk Board']);
+  });
+
+  it('rejects a bad lead phone and saves nothing', async () => {
+    const { headers, tag } = await orgWithOwner();
+    const trek = await trekOf(headers, tag);
+    const res = await call(
+      'POST',
+      `/treks/${trek.id}/batches/bulk`,
+      headers,
+      body({ leads: [{ name: 'Ravi', phone: '98450' }] }),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(await trekBatches(headers, trek.id)).toHaveLength(0);
+  });
+
+  it('lets a pending organizer save drafts but not publish', async () => {
+    const { headers, tag } = await orgWithOwner('pending');
+    const trek = await trekOf(headers, tag);
+    const url = `/treks/${trek.id}/batches/bulk`;
+    expect((await call('POST', url, headers, body({ publish: true }))).statusCode).toBe(403);
+    expect((await call('POST', url, headers, body({}))).statusCode).toBe(201);
   });
 });
 
@@ -391,17 +475,97 @@ describe('organizer-added members', () => {
     expect(count).toHaveLength(0);
   });
 
-  it('lets staff read the roster but not add members', async () => {
+  it("doesn't let a trek lead add members", async () => {
     const { org, headers, tag } = await orgWithOwner();
     const { batches: list } = await createTrekWithBatch(headers, `Staffed ${tag}`, false);
-    const staff = await fx.user();
-    await fx.member(org, staff, 'staff');
+    const lead = await fx.user();
+    await fx.member(org, lead, 'trek_lead');
     const res = await call(
       'POST',
       `/batches/${list[0]!.id}/members`,
-      { authorization: `Bearer ${await keys.sign({ sub: staff })}` },
+      { authorization: `Bearer ${await keys.sign({ sub: lead })}` },
       { contact: { name: 'Solo', phone: '+919876543210' }, guests: [{ fullName: 'Solo' }] },
     );
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('trek leads: access to the batches they lead, by mobile', () => {
+  it('grants on naming, scopes to led batches, and revokes / restores', async () => {
+    const { headers, tag } = await orgWithOwner();
+    const phone = `+9170${String(Date.now()).slice(-8)}`;
+    const lead = await fx.user();
+    await app.db.update(users).set({ phone }).where(eq(users.id, lead));
+    const leadHeaders = { authorization: `Bearer ${await keys.sign({ sub: lead })}` };
+
+    const trek = (
+      await call('POST', '/treks', headers, { title: `Led ${tag}`, catalogTrekName: `Led ${tag}` })
+    ).json() as { id: string };
+    const bulk = (leads: object[], monthDay: string) =>
+      call('POST', `/treks/${trek.id}/batches/bulk`, headers, {
+        pricePaise: 100_000,
+        capacity: 10,
+        departures: [{ departureAt: ist(monthDay), returnAt: ist(monthDay, '20:00') }],
+        leads,
+      });
+    const led = (await bulk([{ name: 'Lead', phone }], '12-04')).json().items[0] as Batch;
+    const other = (await bulk([], '12-11')).json().items[0] as Batch;
+
+    // Named on a batch while already having an account: access straight away.
+    const team = (await call('GET', '/members', headers)).json() as {
+      items: { userId: string; role: string }[];
+    };
+    expect(team.items).toContainEqual(expect.objectContaining({ userId: lead, role: 'trek_lead' }));
+
+    const list = await call('GET', '/batches', leadHeaders);
+    expect(list.statusCode, list.body).toBe(200);
+    expect((list.json().items as Batch[]).map((b) => b.id)).toEqual([led.id]);
+    expect((await call('GET', `/batches/${led.id}`, leadHeaders)).statusCode).toBe(200);
+    expect((await call('GET', `/batches/${other.id}`, leadHeaders)).statusCode).toBe(404);
+    expect((await call('GET', `/batches/${led.id}/bookings`, leadHeaders)).statusCode).toBe(200);
+    expect((await call('GET', `/batches/${other.id}/bookings`, leadHeaders)).statusCode).toBe(404);
+    // Nothing beyond their batches: no money, treks or team.
+    for (const url of ['/dashboard/summary', '/treks', '/members', '/trek-leads']) {
+      expect((await call('GET', url, leadHeaders)).statusCode, url).toBe(403);
+    }
+
+    const leads = (await call('GET', '/trek-leads', headers)).json().items;
+    expect(leads).toEqual([expect.objectContaining({ phone, status: 'active', batchCount: 1 })]);
+
+    const revoked = await call('POST', '/trek-leads/revoke', headers, { phone });
+    expect(revoked.json().items[0].status).toBe('revoked');
+    expect((await call('GET', '/batches', leadHeaders)).statusCode).toBe(403);
+    // Copying a batch doesn't bring a revoked lead back…
+    await call('POST', `/batches/${led.id}/repeat`, headers, {
+      departureAt: ist('12-18'),
+      returnAt: ist('12-18', '20:00'),
+    });
+    expect((await call('GET', '/batches', leadHeaders)).statusCode).toBe(403);
+    // …restoring does.
+    const restored = await call('POST', '/trek-leads/restore', headers, { phone });
+    expect(restored.json().items[0].status).toBe('active');
+    expect((await call('GET', '/batches', leadHeaders)).json().items).toHaveLength(2);
+  });
+
+  it('keeps the owner fixed and lets co-owners in by email or mobile', async () => {
+    const { org, headers } = await orgWithOwner();
+    const team = async () =>
+      (await call('GET', '/members', headers)).json().items as { userId: string; role: string }[];
+    const owner = (await team())[0]!;
+    expect(owner.role).toBe('owner');
+    expect((await call('DELETE', `/members/${owner.userId}`, headers)).statusCode).toBe(403);
+
+    const phone = `+9171${String(Date.now()).slice(-8)}`;
+    const co = await fx.user();
+    await app.db.update(users).set({ phone }).where(eq(users.id, co));
+    const added = await call('POST', '/members', headers, { phone });
+    expect(added.statusCode, added.body).toBe(201);
+    expect(await team()).toContainEqual(expect.objectContaining({ userId: co, role: 'co_owner' }));
+
+    // A co-owner can do what the owner does, except change the owner.
+    const coHeaders = { authorization: `Bearer ${await keys.sign({ sub: co })}` };
+    expect((await call('GET', '/trek-leads', coHeaders)).statusCode).toBe(200);
+    expect((await call('DELETE', `/members/${owner.userId}`, coHeaders)).statusCode).toBe(403);
+    expect(org).toBeTruthy();
   });
 });

@@ -58,7 +58,7 @@ function multipart(
   };
 }
 
-async function setup(role: 'owner' | 'staff' = 'owner') {
+async function setup(role: 'owner' | 'trek_lead' = 'owner') {
   const owner = await fx.user();
   const org = await fx.organizer();
   await fx.member(org, owner, role);
@@ -185,7 +185,7 @@ describe('trek photos', () => {
     expect((await app.inject({ method: 'GET', url: photo.url })).statusCode).toBe(404);
   });
 
-  it('blocks other organizers and staff', async () => {
+  it('blocks other organizers and trek leads', async () => {
     const mine = await setup();
     const theirs = await setup();
     const photo = (
@@ -204,7 +204,7 @@ describe('trek photos', () => {
       ).statusCode,
     ).toBe(404);
 
-    const staff = await setup('staff');
+    const staff = await setup('trek_lead');
     expect(
       (await upload(staff.trek.id, staff.auth, {}, { data: await phoneJpeg(300, 200) })).statusCode,
     ).toBe(403);
@@ -260,5 +260,56 @@ describe('trek photos', () => {
     expect(
       (await app.inject({ method: 'GET', url: `/v1/treks/${s.catalog.slug}` })).json().coverPhoto,
     ).toBeNull();
+  });
+});
+
+describe('organizer logo', () => {
+  it('uploads a logo, serves it, and shows it on the membership', async () => {
+    const s = await setup();
+    const { payload, headers } = multipart({}, { data: await phoneJpeg(600, 600) });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/organizer/profile/logo',
+      headers: { ...s.auth, ...headers },
+      payload,
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const logoUrl = res.json().logoUrl as string;
+    expect(logoUrl).toMatch(/^\/v1\/media\/[0-9a-f-]+-thumb\.webp$/);
+
+    const image = await app.inject({ method: 'GET', url: logoUrl });
+    expect(image.statusCode).toBe(200);
+    expect(image.headers['content-type']).toBe('image/webp');
+
+    const me = await app.inject({ method: 'GET', url: '/v1/me', headers: s.auth });
+    expect(me.json().memberships[0]).toMatchObject({ organizerId: s.org, logoUrl });
+  });
+
+  it("rejects non-images and trek leads' uploads", async () => {
+    const s = await setup();
+    const bad = multipart({}, { data: Buffer.from('not an image'), name: 'x.jpg' });
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/v1/organizer/profile/logo',
+          headers: { ...s.auth, ...bad.headers },
+          payload: bad.payload,
+        })
+      ).statusCode,
+    ).toBe(400);
+
+    const lead = await setup('trek_lead');
+    const ok = multipart({}, { data: await phoneJpeg(300, 300) });
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/v1/organizer/profile/logo',
+          headers: { ...lead.auth, ...ok.headers },
+          payload: ok.payload,
+        })
+      ).statusCode,
+    ).toBe(403);
   });
 });

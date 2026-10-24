@@ -20,6 +20,7 @@ async function loadMe(db: Database, userId: string): Promise<MeResponse> {
         name: organizers.name,
         slug: organizers.slug,
         status: organizers.status,
+        logoUrl: organizers.logoUrl,
         role: organizerMembers.role,
       })
       .from(organizerMembers)

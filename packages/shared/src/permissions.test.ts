@@ -2,18 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { ORG_PERMISSIONS, roleHasPermission, statusAllowsPermission } from './permissions';
 
 describe('role permissions', () => {
-  it('gives owners everything', () => {
-    for (const p of ORG_PERMISSIONS) expect(roleHasPermission('owner', p)).toBe(true);
+  it('gives owners and co-owners everything', () => {
+    for (const p of ORG_PERMISSIONS) {
+      expect(roleHasPermission('owner', p)).toBe(true);
+      expect(roleHasPermission('co_owner', p)).toBe(true);
+    }
   });
 
-  it('keeps member management with owners only', () => {
-    expect(roleHasPermission('manager', 'org:manage_members')).toBe(false);
-    expect(roleHasPermission('staff', 'org:manage_members')).toBe(false);
-  });
-
-  it('limits staff to reading', () => {
-    expect(roleHasPermission('staff', 'bookings:read')).toBe(true);
-    expect(roleHasPermission('staff', 'batches:write')).toBe(false);
+  it('limits trek leads to reading batches and attendees', () => {
+    expect(roleHasPermission('trek_lead', 'batches:read')).toBe(true);
+    expect(roleHasPermission('trek_lead', 'attendees:read')).toBe(true);
+    for (const p of ['org:read', 'bookings:read', 'batches:write', 'org:manage_members'] as const) {
+      expect(roleHasPermission('trek_lead', p)).toBe(false);
+    }
   });
 });
 

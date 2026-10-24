@@ -1,23 +1,28 @@
 'use client';
 
 import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { MeResponse } from '@ohviana/contracts';
+import { roleHasPermission, type OrgPermission } from '@ohviana/shared';
 import { useLoad } from '@/components/dash/hooks';
 import { OrgProvider } from '@/components/dash/org-context';
 import { Avatar, Loading, Shell, StatusBadge, type NavItem } from '@/components/dash/ui';
 import { Icon } from '@/components/Icon';
 import { authedFetch } from '@/lib/authed';
+import { logoSrc } from '@/lib/media';
+import { ROLE_LABELS } from '@/lib/roles';
 import { RegisterOrganizer } from './RegisterOrganizer';
 
 const ACTIVE_ORG_KEY = 'ohviana:active-organizer';
 
-const NAV: NavItem[] = [
-  { href: '/dashboard', label: 'Overview', icon: 'grid' },
-  { href: '/dashboard/batches', label: 'Batches', icon: 'calendar' },
-  { href: '/dashboard/treks', label: 'Treks', icon: 'mountain' },
-  { href: '/dashboard/team', label: 'Team', icon: 'users' },
-  { href: '/dashboard/profile', label: 'Profile', icon: 'building' },
+/** Each section shows only to roles that can use it (trek leads see just Batches). */
+const NAV: (NavItem & { needs: OrgPermission })[] = [
+  { href: '/dashboard', label: 'Overview', icon: 'grid', needs: 'org:read' },
+  { href: '/dashboard/batches', label: 'Batches', icon: 'calendar', needs: 'batches:read' },
+  { href: '/dashboard/treks', label: 'Treks', icon: 'mountain', needs: 'org:read' },
+  { href: '/dashboard/team', label: 'Team', icon: 'users', needs: 'org:manage_members' },
+  { href: '/dashboard/profile', label: 'Profile', icon: 'building', needs: 'org:read' },
 ];
 
 function storedOrg(): string | null {
@@ -31,6 +36,17 @@ function storedOrg(): string | null {
 export function DashboardFrame({ children }: { children: ReactNode }) {
   const me = useLoad(() => authedFetch('/v1/me', MeResponse), []);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const pathname = usePathname();
+  const router = useRouter();
+  const active =
+    me.data?.memberships.find((m) => m.organizerId === activeId) ?? me.data?.memberships[0];
+  const nav = active ? NAV.filter((n) => roleHasPermission(active.role, n.needs)) : NAV;
+  // Trek leads have no overview (it shows the organizer's money): send them to their batches.
+  const lost =
+    !!active && !nav.some((n) => n.href === pathname || pathname.startsWith(`${n.href}/`));
+  useEffect(() => {
+    if (lost && nav[0]) router.replace(nav[0].href);
+  }, [lost, nav, router]);
 
   useEffect(() => setActiveId(storedOrg()), []);
 
@@ -68,7 +84,11 @@ export function DashboardFrame({ children }: { children: ReactNode }) {
   const org = memberships.find((m) => m.organizerId === activeId) ?? memberships[0]!;
   const switcher = (
     <div className="dash-org">
-      <Avatar name={org.name} />
+      {org.logoUrl ? (
+        <img src={logoSrc(org.logoUrl)} alt="" className="org-logo" />
+      ) : (
+        <Avatar name={org.name} />
+      )}
       <div className="stack" style={{ gap: 4, minWidth: 0, flex: 1 }}>
         {memberships.length > 1 ? (
           <select
@@ -89,10 +109,7 @@ export function DashboardFrame({ children }: { children: ReactNode }) {
           </strong>
         )}
         <span className="cluster small" style={{ gap: 6 }}>
-          <StatusBadge status={org.status} />{' '}
-          <span className="muted" style={{ textTransform: 'capitalize' }}>
-            {org.role}
-          </span>
+          <StatusBadge status={org.status} /> <span className="muted">{ROLE_LABELS[org.role]}</span>
         </span>
       </div>
     </div>
@@ -100,8 +117,9 @@ export function DashboardFrame({ children }: { children: ReactNode }) {
 
   return (
     <OrgProvider key={org.organizerId} me={me.data} org={org} reloadMe={me.reload}>
-      <Shell title="Organizer" nav={NAV} aside={switcher}>
-        {children}
+      <Shell title="Organizer" nav={nav} aside={switcher}>
+        {/* Don't render (or load) a section this role can't use while redirecting. */}
+        {lost ? <Loading /> : children}
       </Shell>
     </OrgProvider>
   );

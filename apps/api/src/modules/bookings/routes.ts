@@ -22,7 +22,8 @@ import {
 } from '@ohviana/contracts';
 import { AppError, notFound } from '../../lib/errors';
 import { decodeCursor, toPage } from '../../lib/pagination';
-import { requireAuth, requireOrganizer } from '../../plugins/auth';
+import { requireAuth, requireOrganizer, type OrganizerContext } from '../../plugins/auth';
+import { batchScope } from '../organizer/leads.service';
 import { LIMITS } from '../../plugins/rate-limit';
 import { attendeesCsv } from './csv';
 import { addBatchMembers, cancelBooking, createBooking, tokenMatches } from './engine';
@@ -187,11 +188,19 @@ export const organizerBookingRoutes: FastifyPluginAsyncZod = async (app) => {
     reply.header('cache-control', 'private, no-store');
   });
 
-  async function ownBatch(organizerId: string, batchId: string) {
+  /** The organizer's batch; trek leads only reach batches they lead. */
+  async function ownBatch(ctx: OrganizerContext, batchId: string) {
+    const scope = batchScope(ctx);
     const [batch] = await app.db
       .select({ id: batches.id, name: batches.name, departureAt: batches.departureAt })
       .from(batches)
-      .where(and(eq(batches.id, batchId), eq(batches.organizerId, organizerId)));
+      .where(
+        and(
+          eq(batches.id, batchId),
+          eq(batches.organizerId, ctx.organizerId),
+          ...(scope ? [scope] : []),
+        ),
+      );
     if (!batch) throw notFound('Batch');
     return batch;
   }
@@ -199,7 +208,7 @@ export const organizerBookingRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
     '/batches/:id/bookings',
     {
-      onRequest: g('bookings:read'),
+      onRequest: g('attendees:read'),
       schema: {
         tags,
         summary: 'Bookings and attendees of a batch, with source and commission',
@@ -209,8 +218,7 @@ export const organizerBookingRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request) => {
-      const { organizerId } = requireOrganizer(request);
-      await ownBatch(organizerId, request.params.id);
+      await ownBatch(requireOrganizer(request), request.params.id);
       const items = await loadOrganizerBookings(app.db, eq(bookings.batchId, request.params.id));
       const confirmed = items.filter((b) => b.status === 'confirmed');
       return {
@@ -256,7 +264,7 @@ export const organizerBookingRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
     '/batches/:id/attendees.csv',
     {
-      onRequest: g('bookings:read'),
+      onRequest: g('attendees:read'),
       schema: {
         tags,
         summary: 'Attendee list as CSV (one row per traveller, confirmed bookings)',
@@ -266,8 +274,7 @@ export const organizerBookingRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request, reply) => {
-      const { organizerId } = requireOrganizer(request);
-      const batch = await ownBatch(organizerId, request.params.id);
+      const batch = await ownBatch(requireOrganizer(request), request.params.id);
       const items = await loadOrganizerBookings(app.db, eq(bookings.batchId, batch.id));
       return reply
         .header('content-type', 'text/csv; charset=utf-8')

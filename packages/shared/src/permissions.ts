@@ -12,22 +12,18 @@ export const ORG_PERMISSIONS = [
   'links:write',
   'bookings:read',
   'bookings:manage',
+  /** A batch's details. Trek leads get it only for batches they lead. */
+  'batches:read',
+  /** A batch's attendee list and CSV. Trek leads get it only for batches they lead. */
+  'attendees:read',
 ] as const;
 export type OrgPermission = (typeof ORG_PERMISSIONS)[number];
 
 export const ROLE_PERMISSIONS: Record<OrganizerRole, readonly OrgPermission[]> = {
   owner: ORG_PERMISSIONS,
-  manager: [
-    'org:read',
-    'org:edit_profile',
-    'treks:write',
-    'batches:write',
-    'batches:publish',
-    'links:write',
-    'bookings:read',
-    'bookings:manage',
-  ],
-  staff: ['org:read', 'bookings:read'],
+  co_owner: ORG_PERMISSIONS,
+  // Scoped further to the batches whose leads list their mobile (see the organizer guard).
+  trek_lead: ['batches:read', 'attendees:read'],
 };
 
 /** Permissions still allowed while an organizer is not approved. */
@@ -36,10 +32,17 @@ const LIMITED_STATUS_PERMISSIONS: Record<
   readonly OrgPermission[]
 > = {
   // Pending organizers can prepare their profile and drafts before approval.
-  pending: ['org:read', 'org:edit_profile', 'org:manage_members', 'treks:write', 'batches:write'],
+  pending: [
+    'org:read',
+    'org:edit_profile',
+    'org:manage_members',
+    'treks:write',
+    'batches:write',
+    'batches:read',
+  ],
   // Rejected/suspended organizers keep read access to their own records only.
-  rejected: ['org:read', 'bookings:read'],
-  suspended: ['org:read', 'bookings:read'],
+  rejected: ['org:read', 'bookings:read', 'batches:read', 'attendees:read'],
+  suspended: ['org:read', 'bookings:read', 'batches:read', 'attendees:read'],
 };
 
 export function roleHasPermission(role: OrganizerRole, permission: OrgPermission): boolean {
