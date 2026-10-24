@@ -960,6 +960,7 @@ a.card:hover {
 }
 
 .departure-cards {
+  container-type: inline-size;
   display: grid;
   gap: 14px;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr));
@@ -981,8 +982,45 @@ a.card:hover {
 }
 
 .departure-cover {
+  position: relative;
   flex: none;
   background: var(--surface-2);
+}
+
+/* Difficulty and duration on the photo, readable on any image. */
+.cover-badges {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cover-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgb(15 23 20 / 0.72);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  backdrop-filter: blur(4px);
+}
+
+.cover-badge.diff-easy {
+  background: rgb(22 128 72 / 0.9);
+}
+
+.cover-badge.diff-moderate {
+  background: rgb(176 112 0 / 0.92);
+}
+
+.cover-badge.diff-difficult,
+.cover-badge.diff-challenging {
+  background: rgb(185 40 40 / 0.9);
 }
 
 /* Fixed shape whatever the photo's size, so every card in a row lines up. */
@@ -1003,19 +1041,25 @@ a.card:hover {
 
 .departure-body {
   flex: 1;
-  gap: 6px;
+  gap: 7px;
   padding: 14px 16px 16px;
+}
+
+.departure-body .small {
+  font-size: 0.88rem;
 }
 
 /* Trek name first, then the organizer: the two things people compare. */
 .departure-trek {
   color: var(--fg);
-  font-size: 1.15rem;
+  font-size: 1.3rem;
+  line-height: 1.25;
   font-weight: 750;
   text-decoration: none;
 }
 
 .departure-org {
+  font-size: 0.95rem;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -3041,4 +3085,117 @@ button.photo-cover:hover {
   gap: 4px;
   color: var(--accent);
   font-weight: 600;
+}
+
+/* Filler cards for short days: only when the row fits four cards, so they never wrap. */
+.filler-cell {
+  display: none;
+}
+
+@container (min-width: 1120px) {
+  .filler-cell {
+    display: block;
+  }
+}
+
+.filler-card {
+  height: 100%;
+  min-height: 300px;
+}
+
+.popular-card {
+  position: relative;
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  color: #fff;
+  text-decoration: none;
+}
+
+.popular-card img,
+.popular-card .departure-cover-blank {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  object-fit: cover;
+  transition: transform 0.4s ease;
+}
+
+.popular-card:hover img {
+  transform: scale(1.04);
+}
+
+.popular-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgb(0 0 0 / 0) 25%, rgb(0 0 0 / 0.55) 55%, rgb(0 0 0 / 0.88));
+}
+
+.popular-card .popular-text,
+.popular-card .popular-text strong,
+.popular-card .popular-text .small {
+  color: #fff;
+  text-shadow: 0 1px 6px rgb(0 0 0 / 0.45);
+}
+
+.popular-card .popular-text .filler-eyebrow {
+  color: #1a1a1a;
+  text-shadow: none;
+}
+
+.popular-text {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.popular-text strong {
+  font-size: 1.45rem;
+  line-height: 1.2;
+}
+
+.filler-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #f6b737;
+  color: #1a1a1a;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.popular-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-weight: 700;
+}
+
+/* Explore: "24 departures · 6 treks · 4 verified organizers in the next 4 weeks" */
+.explore-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: -8px 0 0;
+  font-size: 1rem;
+}
+
+.explore-summary svg {
+  color: var(--accent);
+}
+
+.explore-summary .dot {
+  color: var(--muted);
 }

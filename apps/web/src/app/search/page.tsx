@@ -1,11 +1,12 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { PublicBatchList, PublicOrganizerList } from '@ohviana/contracts';
+import { PublicBatchList, PublicOrganizerList, type PublicBatch } from '@ohviana/contracts';
 import { DIFFICULTIES } from '@ohviana/shared';
 import { DepartureGroups } from '@/components/DepartureGroups';
 import { Icon } from '@/components/Icon';
 import { SearchForm } from '@/components/SearchForm';
 import { ApiError, apiFetch, qs } from '@/lib/api';
+import { todayIst } from '@/lib/format';
 import { isoDay, one, searchText, type SearchParams } from '@/lib/params';
 
 export const metadata: Metadata = {
@@ -16,6 +17,19 @@ export const metadata: Metadata = {
 
 /** Departures fetched per page; grouped by day on screen. */
 const PAGE = 60;
+/** The summary line covers this many days from today when nothing is filtered. */
+const SUMMARY_DAYS = 28;
+
+/** "24 departures · 6 treks · 4 verified organizers": counted from the listed departures. */
+function summarize(items: PublicBatch[], more: boolean) {
+  const n = (count: number, one: string, many = `${one}s`) =>
+    `${count}${more ? '+' : ''} ${count === 1 && !more ? one : many}`;
+  return {
+    departures: n(items.length, 'departure'),
+    treks: n(new Set(items.map((b) => b.catalogTrek.id)).size, 'trek'),
+    organizers: n(new Set(items.map((b) => b.organizer.id)).size, 'verified organizer'),
+  };
+}
 
 /**
  * Explore: upcoming departures across every trek, grouped by day, one card per organizer's
@@ -34,8 +48,14 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
   // "Other treks in <district>" from a trek page.
   const district = one(sp.district)?.trim().slice(0, 80) || undefined;
 
+  const filtered = !!(query || from || to || difficulty || district);
+  const today = todayIst();
+  const summaryEnd = new Date(Date.parse(`${today}T00:00:00Z`) + (SUMMARY_DAYS - 1) * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
   let error: string | null = null;
-  const [departures, organizers] = await Promise.all([
+  const [departures, organizers, upcoming] = await Promise.all([
     apiFetch(
       `/v1/batches${qs({ query, from, to, difficulty, district, cursor, limit: PAGE })}`,
       PublicBatchList,
@@ -52,9 +72,19 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
           next: { revalidate: 30 },
         }).catch(() => null)
       : Promise.resolve(null),
+    // Unfiltered: the next four weeks across Ohviana, for the summary line.
+    filtered || cursor
+      ? Promise.resolve(null)
+      : apiFetch(`/v1/batches${qs({ from: today, to: summaryEnd, limit: 100 })}`, PublicBatchList, {
+          next: { revalidate: 60 },
+        }).catch(() => null),
   ]);
 
-  const filtered = !!(query || from || to || difficulty || district);
+  const summary = upcoming
+    ? summarize(upcoming.items, !!upcoming.nextCursor)
+    : departures && filtered && !cursor && departures.items.length > 0
+      ? summarize(departures.items, !!departures.nextCursor)
+      : null;
   const chips = [
     district && { icon: 'pin' as const, text: `Area: ${district}` },
     difficulty && { icon: 'check' as const, text: `Difficulty: ${difficulty}` },
@@ -93,6 +123,28 @@ export default async function SearchPage({ searchParams }: { searchParams: Searc
           )}
         </div>
       </div>
+
+      {summary && (
+        <p className="explore-summary">
+          <span>
+            <strong>{summary.departures}</strong>
+          </span>
+          <span className="dot" aria-hidden="true">
+            ·
+          </span>
+          <span>
+            <strong>{summary.treks}</strong>
+          </span>
+          <span className="dot" aria-hidden="true">
+            ·
+          </span>
+          <span className="cluster" style={{ gap: 5 }}>
+            <Icon name="shield" size={15} />
+            <strong>{summary.organizers}</strong>
+          </span>
+          <span className="muted">{upcoming ? 'in the next 4 weeks' : 'match your search'}</span>
+        </p>
+      )}
 
       {error && <p className="notice danger">{error}</p>}
 

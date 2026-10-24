@@ -38,10 +38,17 @@ export function DepartureGroups({
     const k = dayKey(b.departureAt);
     days.set(k, [...(days.get(k) ?? []), b]);
   }
+  const popular = showTrek ? popularTreks(batches) : [];
   return (
     <div className="stack-lg">
       {[...days.values()].map((list) => (
-        <DayGroup key={dayKey(list[0]!.departureAt)} list={list} showTrek={showTrek} via={via} />
+        <DayGroup
+          key={dayKey(list[0]!.departureAt)}
+          list={list}
+          showTrek={showTrek}
+          via={via}
+          popular={popular}
+        />
       ))}
     </div>
   );
@@ -51,13 +58,20 @@ function DayGroup({
   list,
   showTrek,
   via,
+  popular,
 }: {
   list: PublicBatch[];
   showTrek: boolean;
   via?: string | undefined;
+  popular: PopularTrek[];
 }) {
   const [open, setOpen] = useState(false);
   const shown = open ? list : list.slice(0, ROW);
+  // A short day leaves blank space in its row: fill it with popular treks not already in this
+  // day. Hidden on narrow screens, where rows hold fewer cards.
+  const room = showTrek ? ROW - shown.length : 0;
+  const here = new Set(list.map((b) => b.catalogTrek.slug));
+  const picks = room > 0 ? popular.filter((p) => !here.has(p.slug)).slice(0, room) : [];
   return (
     <section className="stack day-group">
       <div className="spread">
@@ -70,6 +84,11 @@ function DayGroup({
         {shown.map((b) => (
           <li key={b.id}>
             <DepartureCard b={b} showTrek={showTrek} via={via} />
+          </li>
+        ))}
+        {picks.map((p) => (
+          <li key={p.slug} className="filler-cell">
+            <PopularCard p={p} />
           </li>
         ))}
       </ul>
@@ -98,7 +117,7 @@ function DepartureCard({
   via?: string | undefined;
 }) {
   const viaQs = via ? `?via=${encodeURIComponent(via)}` : '';
-  const cover = b.trek.photos[0];
+  const cover = coverOf(b);
   const bookable = b.availability === 'available';
   return (
     <article className={`card departure-card${bookable ? '' : ' unavailable'}`}>
@@ -111,6 +130,16 @@ function DepartureCard({
               <Icon name="mountain" size={28} />
             </span>
           )}
+          <span className="cover-badges">
+            {b.trek.difficulty && (
+              <span className={`cover-badge diff-${b.trek.difficulty}`}>
+                {DIFFICULTY_LABEL[b.trek.difficulty]}
+              </span>
+            )}
+            <span className="cover-badge">
+              <Icon name="clock" size={12} /> {durationLabel(b.departureAt, b.returnAt)}
+            </span>
+          </span>
         </div>
       )}
       <div className="stack departure-body">
@@ -142,7 +171,9 @@ function DepartureCard({
         <span className="meta-line small">
           <Icon name="clock" size={14} />
           <span>
-            {dateTime(b.departureAt)} · {durationLabel(b.departureAt, b.returnAt)}
+            {dateTime(b.departureAt)}
+            {/* With a cover photo the duration is a badge on it. */}
+            {!showTrek && ` · ${durationLabel(b.departureAt, b.returnAt)}`}
             {b.trek.startPoint && ` · from ${b.trek.startPoint}`}
           </span>
         </span>
@@ -173,6 +204,80 @@ function DepartureCard({
         </div>
       </div>
     </article>
+  );
+}
+
+const DIFFICULTY_LABEL: Record<NonNullable<PublicBatch['trek']['difficulty']>, string> = {
+  easy: 'Easy',
+  moderate: 'Moderate',
+  difficult: 'Difficult',
+  challenging: 'Challenging',
+};
+
+/** The trip's best "this is the place" shot: a destination photo, else its first photo. */
+function coverOf(b: PublicBatch) {
+  return b.trek.photos.find((p) => p.category === 'destination') ?? b.trek.photos[0];
+}
+
+interface PopularTrek {
+  slug: string;
+  name: string;
+  count: number;
+  cover: PublicBatch['trek']['photos'][number] | undefined;
+  /** Gallery size behind `cover`: the fullest gallery is likeliest a real photo, not a banner. */
+  photoCount: number;
+  minPricePaise: number;
+}
+
+/** Treks with more than one bookable departure in the list, busiest first. */
+function popularTreks(batches: PublicBatch[]): PopularTrek[] {
+  const by = new Map<string, PopularTrek>();
+  for (const b of batches) {
+    if (b.availability !== 'available') continue;
+    const p = by.get(b.catalogTrek.slug);
+    if (p) {
+      p.count += 1;
+      p.minPricePaise = Math.min(p.minPricePaise, b.pricePaise);
+      if (b.trek.photos.length > p.photoCount) {
+        p.cover = coverOf(b);
+        p.photoCount = b.trek.photos.length;
+      }
+    } else {
+      by.set(b.catalogTrek.slug, {
+        slug: b.catalogTrek.slug,
+        name: b.catalogTrek.name,
+        count: 1,
+        cover: coverOf(b),
+        photoCount: b.trek.photos.length,
+        minPricePaise: b.pricePaise,
+      });
+    }
+  }
+  return [...by.values()].filter((p) => p.count > 1).sort((a, b) => b.count - a.count);
+}
+
+function PopularCard({ p }: { p: PopularTrek }) {
+  return (
+    <Link href={`/treks/${p.slug}`} className="card filler-card popular-card">
+      {p.cover ? (
+        <img src={mediaUrl(p.cover.thumbUrl)} alt="" loading="lazy" />
+      ) : (
+        <span className="departure-cover-blank" aria-hidden="true" />
+      )}
+      <span className="popular-shade" aria-hidden="true" />
+      <span className="popular-text">
+        <span className="filler-eyebrow">
+          <Icon name="sparkle" size={13} /> Popular this month
+        </span>
+        <strong>{p.name}</strong>
+        <span className="small">
+          {p.count} departures · from {price(p.minPricePaise)}
+        </span>
+        <span className="small popular-cta">
+          See all dates <Icon name="arrowRight" size={14} />
+        </span>
+      </span>
+    </Link>
   );
 }
 

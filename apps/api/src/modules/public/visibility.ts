@@ -9,6 +9,7 @@ import {
   type Database,
 } from '@ohviana/db';
 import type { PublicBatch } from '@ohviana/contracts';
+import type { DIFFICULTIES } from '@ohviana/shared';
 import { badRequest } from '../../lib/errors';
 import { loadTrekPhotos } from '../media/service';
 
@@ -93,6 +94,10 @@ export function visibleBatchesQuery(db: Database) {
         summary: organizerTreks.summary,
         durationDays: organizerTreks.durationDays,
         startPoint: organizerTreks.startPoint,
+        // The organizer's own rating, else the destination's.
+        difficulty: sql<
+          (typeof DIFFICULTIES)[number] | null
+        >`coalesce(${organizerTreks.difficulty}, ${catalogTreks.difficulty})`,
         itinerary: organizerTreks.itinerary,
         inclusions: organizerTreks.inclusions,
         exclusions: organizerTreks.exclusions,
