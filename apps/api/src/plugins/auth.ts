@@ -1,7 +1,7 @@
 import fp from 'fastify-plugin';
 import type { FastifyRequest } from 'fastify';
 import { and, eq } from 'drizzle-orm';
-import { organizerMembers, organizers } from '@ohviana/db';
+import { organizerMembers, organizers, users } from '@ohviana/db';
 import {
   roleHasPermission,
   statusAllowsPermission,
@@ -31,6 +31,8 @@ export interface OrganizerContext {
   organizerId: string;
   role: OrganizerRole;
   status: OrganizerStatus;
+  /** The member's mobile (E.164): a trek lead only sees batches that list it as a lead. */
+  phone: string | null;
 }
 
 declare module 'fastify' {
@@ -145,9 +147,11 @@ export default fp<AuthPluginOptions>(
             organizerId: organizerMembers.organizerId,
             role: organizerMembers.role,
             status: organizers.status,
+            phone: users.phone,
           })
           .from(organizerMembers)
           .innerJoin(organizers, eq(organizers.id, organizerMembers.organizerId))
+          .innerJoin(users, eq(users.id, organizerMembers.userId))
           .where(
             requested
               ? and(

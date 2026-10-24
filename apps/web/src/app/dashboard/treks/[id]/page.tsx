@@ -9,6 +9,7 @@ import { useOrg } from '@/components/dash/org-context';
 import { Loading, Outcome, StatusBadge } from '@/components/dash/ui';
 import { Icon, type IconName } from '@/components/Icon';
 import { dateRange, dateTime, price } from '@/lib/format';
+import { toE164 } from '@/lib/phone';
 import { istLocalToIso, linesToList, rupeesToPaise } from '@/lib/datetime';
 import { DestinationInput } from '../DestinationInput';
 import { PhotoManager } from '../PhotoManager';
@@ -32,7 +33,7 @@ export default function TrekDetailPage() {
 
 function TrekDetail() {
   const { id } = useParams<{ id: string }>();
-  const { call, can } = useOrg();
+  const { call, can, org } = useOrg();
   const trek = useLoad(() => call(`/treks/${id}`, OrganizerTrek), [call, id]);
   const params = useSearchParams();
   const created = params.get('created');
@@ -53,7 +54,7 @@ function TrekDetail() {
         <div className="spread">
           <span className="cluster" style={{ gap: 10 }}>
             <h1 style={{ margin: 0 }}>{t.title}</h1>
-            <StatusBadge status={t.status} />
+            {t.status === 'archived' && <StatusBadge status={t.status} />}
           </span>
           {writable &&
             (editing ? (
@@ -69,9 +70,8 @@ function TrekDetail() {
       </div>
       {created && !editing && (
         <p className="notice ok small" style={{ margin: 0 }}>
-          {created === 'published'
-            ? 'Trek published. Add its dates below so trekkers can book.'
-            : 'Trek saved. It goes live once your organization is approved; add its dates below.'}
+          Trek saved. Add its dates below so trekkers can book.
+          {org.status !== 'approved' && ' Bookings open once your organization is approved.'}
         </p>
       )}
       {photosFailed > 0 && (
@@ -285,7 +285,7 @@ function TrekForm({
     setF({ ...f, [k]: e.target.value });
   const durationDays = f.durationDays ? Number(f.durationDays) : null;
 
-  const body = (status?: 'draft' | 'published' | 'archived') => ({
+  const body = (status?: 'published' | 'archived') => ({
     title: f.title.trim(),
     summary: f.summary.trim() || null,
     durationDays,
@@ -304,7 +304,7 @@ function TrekForm({
     ...(status ? { status } : {}),
   });
 
-  const save = (status?: 'draft' | 'published' | 'archived') =>
+  const save = (status?: 'published' | 'archived') =>
     action.run(
       async () => {
         const updated = await call(`/treks/${trek.id}`, OrganizerTrek, {
@@ -533,7 +533,23 @@ function Pickups({
   );
 }
 
-/** Creates one batch or a weekly series in a single all-or-nothing request (drafts). */
+interface PickupRow {
+  key: number;
+  name: string;
+  /** IST wall-clock time for the first departure; the same offset applies to repeats. */
+  time: string;
+}
+interface LeadRow {
+  key: number;
+  name: string;
+  phone: string;
+}
+let rowKey = 1;
+
+/**
+ * One departure or a weekly series, with pickups (existing or new, by name) and trek leads, in a
+ * single all-or-nothing request. Save as drafts or publish straight away.
+ */
 function AddBatches({
   trek,
   onClose,
@@ -543,8 +559,9 @@ function AddBatches({
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const { call } = useOrg();
+  const { call, can } = useOrg();
   const action = useAction();
+  const canPublish = can('batches:publish');
   const [f, setF] = useState({
     departure: '',
     returnAt: '',
@@ -554,17 +571,42 @@ function AddBatches({
     capacity: '20',
     maxPerBooking: '10',
   });
-  const [pickupOffsets, setPickupOffsets] = useState<Record<string, string>>({});
+  const [pickups, setPickups] = useState<PickupRow[]>([{ key: rowKey++, name: '', time: '' }]);
+  const [leads, setLeads] = useState<LeadRow[]>([{ key: rowKey++, name: '', phone: '' }]);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) =>
     setF({ ...f, [k]: e.target.value });
+  const setPickup = (key: number, k: 'name' | 'time', v: string) =>
+    setPickups(pickups.map((p) => (p.key === key ? { ...p, [k]: v } : p)));
+  const setLead = (key: number, k: 'name' | 'phone', v: string) =>
+    setLeads(leads.map((l) => (l.key === key ? { ...l, [k]: v } : l)));
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  async function submit(publish: boolean) {
     const dep = istLocalToIso(f.departure);
     const ret = istLocalToIso(f.returnAt);
     if (!dep || !ret) return action.setError('Enter departure and return date & time.');
     const paise = rupeesToPaise(f.price);
     if (paise === null) return action.setError('Enter the price in rupees, e.g. 2499');
+
+    const usedPickups = pickups.filter((p) => p.name.trim());
+    const pickupBody: { name: string; minutesFromDeparture: number }[] = [];
+    for (const p of usedPickups) {
+      const at = p.time ? istLocalToIso(p.time) : dep;
+      if (!at) return action.setError(`Check the pickup time for ${p.name.trim()}.`);
+      const minutes = Math.round((Date.parse(at) - Date.parse(dep)) / 60_000);
+      if (Math.abs(minutes) > 1440) {
+        return action.setError(`${p.name.trim()}: pickup must be within 24 hours of departure.`);
+      }
+      pickupBody.push({ name: p.name.trim(), minutesFromDeparture: minutes });
+    }
+    const leadBody: { name: string; phone: string }[] = [];
+    for (const l of leads.filter((x) => x.name.trim() || x.phone.trim())) {
+      const phone = toE164(l.phone);
+      if (!l.name.trim() || !phone) {
+        return action.setError('Give each trek lead a name and a valid mobile number.');
+      }
+      leadBody.push({ name: l.name.trim(), phone });
+    }
+
     const weeks = Math.min(52, Math.max(1, Number(f.weeks) || 1));
     const WEEK = 7 * 86_400_000;
     const cutoffMs = Math.max(0, Number(f.cutoffHours) || 0) * 3_600_000;
@@ -576,13 +618,8 @@ function AddBatches({
         bookingCutoffAt: new Date(d - cutoffMs).toISOString(),
       };
     });
-    const pickups = Object.entries(pickupOffsets)
-      .filter(([, v]) => v !== '')
-      .map(([pickupPointId, v]) => ({
-        pickupPointId,
-        minutesFromDeparture: -Math.abs(Number(v) || 0),
-      }));
 
+    const n = weeks === 1 ? '1 date' : `${weeks} dates`;
     await action.run(
       async () => {
         const created = await call(`/treks/${trek.id}/batches/bulk`, OrganizerBatchArray, {
@@ -592,26 +629,37 @@ function AddBatches({
             capacity: Number(f.capacity),
             maxSeatsPerBooking: Number(f.maxPerBooking),
             departures,
-            pickups,
+            pickups: pickupBody,
+            leads: leadBody,
+            publish,
           },
         });
         onCreated();
         return created;
       },
-      `${weeks === 1 ? 'Draft batch' : `${weeks} draft batches`} created — publish them from Batches.`,
+      publish
+        ? `Published ${n}. Trekkers can book now.`
+        : `Saved ${n} as draft. Publish from Batches when ready.`,
     );
   }
 
+  const existingPickups = `pickups-${trek.id}`;
+
   return (
-    <form onSubmit={submit} className="stack add-dates">
-      <strong>Add dates</strong>
-      <p className="small muted" style={{ margin: 0 }}>
-        Times are in IST. Set “Repeat weekly” to create the same trip for several weeks; each batch
-        gets its own name, seats and attendee list.
-      </p>
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        void submit(canPublish);
+      }}
+      className="stack add-dates"
+    >
+      <div className="spread">
+        <strong>Add dates</strong>
+        <span className="small muted">Times are in IST</span>
+      </div>
       <div className="form-grid">
         <div className="field">
-          <label htmlFor="ab-dep">First departure</label>
+          <label htmlFor="ab-dep">Departure</label>
           <input
             id="ab-dep"
             type="datetime-local"
@@ -631,27 +679,18 @@ function AddBatches({
           />
         </div>
         <div className="field">
-          <label htmlFor="ab-cut">Close bookings (hours before)</label>
-          <input
-            id="ab-cut"
-            type="number"
-            min={0}
-            max={720}
-            value={f.cutoffHours}
-            onChange={set('cutoffHours')}
-          />
+          <label htmlFor="ab-weeks">Repeat</label>
+          <select id="ab-weeks" value={f.weeks} onChange={set('weeks')}>
+            <option value="1">Just this date</option>
+            {Array.from({ length: 11 }, (_, i) => i + 2).map((n) => (
+              <option key={n} value={n}>
+                Weekly for {n} weeks
+              </option>
+            ))}
+          </select>
         </div>
-        <div className="field">
-          <label htmlFor="ab-weeks">Repeat weekly (weeks)</label>
-          <input
-            id="ab-weeks"
-            type="number"
-            min={1}
-            max={52}
-            value={f.weeks}
-            onChange={set('weeks')}
-          />
-        </div>
+      </div>
+      <div className="form-grid">
         <div className="field">
           <label htmlFor="ab-price">Price per person (₹)</label>
           <input
@@ -686,36 +725,129 @@ function AddBatches({
             onChange={set('maxPerBooking')}
           />
         </div>
-      </div>
-      {trek.pickupPoints.length > 0 && (
-        <div className="stack">
-          <span className="small">
-            <strong>Pickups</strong> — minutes before departure (leave empty to skip)
-          </span>
-          {trek.pickupPoints.map((p) => (
-            <div key={p.id} className="form-grid">
-              <span style={{ alignSelf: 'center' }}>{p.name}</span>
-              <input
-                type="number"
-                min={0}
-                max={1440}
-                aria-label={`${p.name} minutes before departure`}
-                value={pickupOffsets[p.id] ?? ''}
-                onChange={(e) => setPickupOffsets({ ...pickupOffsets, [p.id]: e.target.value })}
-              />
-            </div>
-          ))}
+        <div className="field">
+          <label htmlFor="ab-cut">Close bookings (hours before)</label>
+          <input
+            id="ab-cut"
+            type="number"
+            min={0}
+            max={720}
+            value={f.cutoffHours}
+            onChange={set('cutoffHours')}
+          />
         </div>
-      )}
+      </div>
+
+      <div className="stack" style={{ gap: 8 }}>
+        <strong className="small">Pickup points</strong>
+        <datalist id={existingPickups}>
+          {trek.pickupPoints.map((p) => (
+            <option key={p.id} value={p.name} />
+          ))}
+        </datalist>
+        {pickups.map((p, i) => (
+          <div key={p.key} className="row-inputs">
+            <input
+              aria-label={`Pickup ${i + 1} name`}
+              list={existingPickups}
+              maxLength={120}
+              placeholder="e.g. Majestic Bus Stand"
+              value={p.name}
+              onChange={(e) => setPickup(p.key, 'name', e.target.value)}
+            />
+            <input
+              aria-label={`Pickup ${i + 1} time`}
+              type="datetime-local"
+              title="Pickup time for the first date (defaults to departure)"
+              value={p.time}
+              onChange={(e) => setPickup(p.key, 'time', e.target.value)}
+            />
+            <button
+              type="button"
+              className="small secondary"
+              aria-label={`Remove pickup ${i + 1}`}
+              onClick={() => setPickups(pickups.filter((x) => x.key !== p.key))}
+            >
+              <Icon name="x" size={16} />
+            </button>
+          </div>
+        ))}
+        {pickups.length < 20 && (
+          <button
+            type="button"
+            className="link small"
+            style={{ alignSelf: 'flex-start' }}
+            onClick={() => setPickups([...pickups, { key: rowKey++, name: '', time: '' }])}
+          >
+            + Add pickup point
+          </button>
+        )}
+      </div>
+
+      <div className="stack" style={{ gap: 8 }}>
+        <strong className="small">Trek leads</strong>
+        {leads.map((l, i) => (
+          <div key={l.key} className="row-inputs">
+            <input
+              aria-label={`Trek lead ${i + 1} name`}
+              maxLength={80}
+              placeholder="Name"
+              value={l.name}
+              onChange={(e) => setLead(l.key, 'name', e.target.value)}
+            />
+            <input
+              aria-label={`Trek lead ${i + 1} mobile`}
+              type="tel"
+              inputMode="tel"
+              placeholder="Mobile, e.g. 98450 12345"
+              value={l.phone}
+              onChange={(e) => setLead(l.key, 'phone', e.target.value)}
+            />
+            <button
+              type="button"
+              className="small secondary"
+              aria-label={`Remove trek lead ${i + 1}`}
+              onClick={() => setLeads(leads.filter((x) => x.key !== l.key))}
+            >
+              <Icon name="x" size={16} />
+            </button>
+          </div>
+        ))}
+        {leads.length < 5 && (
+          <button
+            type="button"
+            className="link small"
+            style={{ alignSelf: 'flex-start' }}
+            onClick={() => setLeads([...leads, { key: rowKey++, name: '', phone: '' }])}
+          >
+            + Add trek lead
+          </button>
+        )}
+      </div>
+
       <Outcome error={action.error} message={action.message} />
+      {!canPublish && (
+        <span className="small muted">
+          Publishing unlocks once your organization is approved; save drafts until then.
+        </span>
+      )}
       <div className="cluster">
-        <button type="submit" disabled={action.pending}>
-          Create draft batches
+        {canPublish && (
+          <button type="submit" disabled={action.pending}>
+            Publish
+          </button>
+        )}
+        <button
+          type="button"
+          className="secondary"
+          disabled={action.pending}
+          onClick={() => void submit(false)}
+        >
+          Save draft
         </button>
-        <button type="button" className="secondary" onClick={onClose}>
+        <button type="button" className="link" onClick={onClose}>
           {action.message ? 'Close' : 'Cancel'}
         </button>
-        {action.message && <Link href="/dashboard/batches?view=draft">Go to drafts →</Link>}
       </div>
     </form>
   );

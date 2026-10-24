@@ -7,6 +7,11 @@ export function mediaUrl(path: string): string {
   return `${API_BASE_URL}${path}`;
 }
 
+/** An organizer logo: an https link as given, or an uploaded one (API path). */
+export function logoSrc(url: string): string {
+  return url.startsWith('/') ? mediaUrl(url) : url;
+}
+
 export const PHOTO_CATEGORY_LABELS: Record<PhotoCategory, string> = {
   destination: 'Destination',
   trail: 'Trail',

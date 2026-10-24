@@ -7,13 +7,13 @@ import {
   PublicBatch,
   PublicBatchList,
   PublicBatchQuery,
-  PublicOrganizer,
+  BatchSearchQuery,
+  PublicOrganizerDetail,
   PublicOrganizerList,
   PublicTrekDetail,
   PublicTrekList,
   SlugParams,
   TokenParams,
-  TrekDateList,
   TrekSearchQuery,
 } from '@ohviana/contracts';
 import {
@@ -23,9 +23,9 @@ import {
   getTrek,
   organizerBatches,
   searchOrganizers,
+  searchBatches,
   searchTreks,
   trekBatches,
-  trekDates,
 } from './service';
 import { LIMITS } from '../../plugins/rate-limit';
 
@@ -74,16 +74,17 @@ export const publicRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   app.get(
-    '/treks/:slug/dates',
+    '/batches',
     {
+      config: { rateLimit: LIMITS.search },
       schema: {
         tags,
-        summary: 'Upcoming departure days of a trek, summarised across organizers',
-        params: SlugParams,
-        response: { 200: TrekDateList, ...errors },
+        summary: 'Search departures across all treks (trek, district or organizer; dates)',
+        querystring: BatchSearchQuery,
+        response: { 200: PublicBatchList, ...errors },
       },
     },
-    async (request) => trekDates(app.db, request.params.slug),
+    async (request) => searchBatches(app.db, request.query),
   );
 
   app.get(
@@ -121,7 +122,7 @@ export const publicRoutes: FastifyPluginAsyncZod = async (app) => {
         tags,
         summary: 'Public organizer profile',
         params: SlugParams,
-        response: { 200: PublicOrganizer, ...errors },
+        response: { 200: PublicOrganizerDetail, ...errors },
       },
     },
     async (request) => getOrganizer(app.db, request.params.slug),

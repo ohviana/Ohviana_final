@@ -13,6 +13,8 @@ export const Membership = z.object({
   slug: z.string(),
   status: z.enum(ORGANIZER_STATUSES),
   role: z.enum(ORGANIZER_ROLES),
+  /** An https link, or an API path (/v1/media/…) for an uploaded logo. */
+  logoUrl: z.string().nullable(),
 });
 export type Membership = z.infer<typeof Membership>;
 

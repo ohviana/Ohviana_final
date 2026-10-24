@@ -29,12 +29,10 @@ async function fillCheckout(page: Page, opts: { phone?: string } = {}) {
   return fresh.e164;
 }
 
-/** Trek page: choose the first upcoming date, which lists that day's organizers. */
+/** Trek page: departures are listed by day, one card per organizer. */
 async function pickFirstDate(page: Page) {
-  await expect(page.getByRole('heading', { name: 'Pick a date' })).toBeVisible();
-  await page.locator('.date-card').first().click();
-  await page.waitForURL(/[?&]date=\d{4}-\d{2}-\d{2}/);
-  await expect(page.getByText(/organizers? runs? this date/)).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Upcoming departures' })).toBeVisible();
+  await expect(page.locator('.departure-card').first()).toBeVisible();
 }
 
 async function confirmAndGetReference(page: Page): Promise<string> {
@@ -46,7 +44,7 @@ async function confirmAndGetReference(page: Page): Promise<string> {
   return reference;
 }
 
-test('marketplace journey: search → pick a date → book → confirmation → cancel', async ({
+test('marketplace journey: search → departures by day → book → confirmation → cancel', async ({
   page,
 }) => {
   await page.goto('/');

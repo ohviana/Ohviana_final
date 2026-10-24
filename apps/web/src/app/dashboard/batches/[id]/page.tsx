@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { prettyPhone, toE164 } from '@/lib/phone';
 import { useParams } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import {
@@ -12,6 +13,7 @@ import {
 import { useAction, useLoad } from '@/components/dash/hooks';
 import { useOrg } from '@/components/dash/org-context';
 import { askReason, Loading, Outcome, StatusBadge } from '@/components/dash/ui';
+import { Icon } from '@/components/Icon';
 import { authedDownload } from '@/lib/authed';
 import { isoToIstLocal, istLocalToIso, paiseToRupees, rupeesToPaise } from '@/lib/datetime';
 import { dateRange, dateTime, price } from '@/lib/format';
@@ -31,11 +33,15 @@ export default function BatchDetailPage() {
   const bookings = useLoad(() => call(`/batches/${id}/bookings`, OrganizerBookingList), [call, id]);
   const trekId = batch.data?.organizerTrekId;
   const trek = useLoad(
-    async () => (trekId ? call(`/treks/${trekId}`, OrganizerTrek) : null),
-    [call, trekId],
+    // Only editors need the trek (its pickup points); trek leads can't read treks.
+    async () => (trekId && can('batches:write') ? call(`/treks/${trekId}`, OrganizerTrek) : null),
+    [call, trekId, can],
   );
   const action = useAction();
   const [view, setView] = useState<'travellers' | 'bookings'>('travellers');
+  // At most one tool open at a time; none by default.
+  const [panel, setPanel] = useState<'edit' | 'members' | 'repeat' | null>(null);
+  const toggle = (p: NonNullable<typeof panel>) => setPanel(panel === p ? null : p);
 
   if (batch.loading && !batch.data) return <Loading />;
   if (!batch.data) return <Outcome error={batch.error} />;
@@ -110,7 +116,37 @@ export default function BatchDetailPage() {
         {b.status === 'draft' && !can('batches:publish') && org.status === 'pending' && (
           <span className="badge warn">Publishing unlocks after approval</span>
         )}
-        {can('bookings:read') && (
+        {editable && (
+          <button
+            type="button"
+            className="secondary"
+            aria-expanded={panel === 'edit'}
+            onClick={() => toggle('edit')}
+          >
+            <Icon name="pencil" size={16} /> Edit batch
+          </button>
+        )}
+        {canAdd && (
+          <button
+            type="button"
+            className="secondary"
+            aria-expanded={panel === 'members'}
+            onClick={() => toggle('members')}
+          >
+            <Icon name="users" size={16} /> Add members
+          </button>
+        )}
+        {can('batches:write') && (
+          <button
+            type="button"
+            className="secondary"
+            aria-expanded={panel === 'repeat'}
+            onClick={() => toggle('repeat')}
+          >
+            <Icon name="calendar" size={16} /> Run again
+          </button>
+        )}
+        {can('attendees:read') && (
           <button
             type="button"
             className="secondary"
@@ -137,7 +173,36 @@ export default function BatchDetailPage() {
         </p>
       )}
       <Outcome error={action.error} message={action.message} />
+      {panel === 'edit' && editable && (
+        <EditBatch
+          batch={b}
+          trek={trek.data}
+          onSaved={async () => {
+            await refresh();
+            setPanel(null);
+          }}
+          onClose={() => setPanel(null)}
+        />
+      )}
+      {panel === 'members' && canAdd && (
+        <AddMembers batch={b} onAdded={refresh} onClose={() => setPanel(null)} />
+      )}
+      {panel === 'repeat' && can('batches:write') && (
+        <RepeatBatch key={b.id} batch={b} onClose={() => setPanel(null)} />
+      )}
       <BookingLink batch={b} onCreated={batch.reload} />
+
+      {b.leads.length > 0 && (
+        <section className="card stack" style={{ gap: 8 }}>
+          <h2 style={{ margin: 0 }}>Trek leads</h2>
+          {b.leads.map((l) => (
+            <div key={l.phone} className="spread small">
+              <strong>{l.name}</strong>
+              <a href={`tel:${l.phone}`}>{prettyPhone(l.phone)}</a>
+            </div>
+          ))}
+        </section>
+      )}
 
       <section className="stack">
         <h2>
@@ -154,7 +219,7 @@ export default function BatchDetailPage() {
         {bookings.data && bookings.data.items.length === 0 && (
           <p className="muted">
             No bookings yet.
-            {canAdd && ' People who booked by phone or WhatsApp can be added below.'}
+            {canAdd && ' Use Add members for people who booked by phone or WhatsApp.'}
           </p>
         )}
         {bookings.data && bookings.data.items.length > 0 && (
@@ -272,16 +337,29 @@ export default function BatchDetailPage() {
           </ul>
         )}
       </section>
-
-      {canAdd && <AddMembers batch={b} onAdded={refresh} />}
-      {can('batches:write') && <RepeatBatch key={b.id} batch={b} />}
-      {editable && <EditBatch batch={b} onSaved={refresh} />}
-      {editable && trek.data && <BatchPickups batch={b} trek={trek.data} onSaved={refresh} />}
     </>
   );
 }
 
-function EditBatch({ batch, onSaved }: { batch: OrganizerBatch; onSaved: () => Promise<void> }) {
+interface LeadRow {
+  key: number;
+  name: string;
+  phone: string;
+}
+let leadKey = 1;
+
+/** Dates, price, seats, notes, pickup times and trek leads, saved together. */
+function EditBatch({
+  batch,
+  trek,
+  onSaved,
+  onClose,
+}: {
+  batch: OrganizerBatch;
+  trek: OrganizerTrek | null;
+  onSaved: () => Promise<void>;
+  onClose: () => void;
+}) {
   const { call } = useOrg();
   const action = useAction();
   const initial = {
@@ -294,6 +372,15 @@ function EditBatch({ batch, onSaved }: { batch: OrganizerBatch; onSaved: () => P
     notes: batch.notes ?? '',
   };
   const [f, setF] = useState(initial);
+  const initialTimes: Record<string, string> = Object.fromEntries(
+    batch.pickups.map((p) => [p.pickupPointId, isoToIstLocal(p.pickupAt)]),
+  );
+  const [times, setTimes] = useState(initialTimes);
+  const [leads, setLeads] = useState<LeadRow[]>(() =>
+    batch.leads.length
+      ? batch.leads.map((l) => ({ key: leadKey++, name: l.name, phone: prettyPhone(l.phone) }))
+      : [{ key: leadKey++, name: '', phone: '' }],
+  );
   const datesLocked = batch.confirmedSeats > 0;
 
   async function save(e: FormEvent) {
@@ -315,21 +402,54 @@ function EditBatch({ batch, onSaved }: { batch: OrganizerBatch; onSaved: () => P
     if (['departureAt', 'returnAt', 'bookingCutoffAt'].some((k) => k in body && body[k] === null)) {
       return action.setError('Check the dates.');
     }
-    if (Object.keys(body).length === 0) return action.setError('Nothing changed.');
+
+    const nextLeads: { name: string; phone: string }[] = [];
+    for (const l of leads.filter((x) => x.name.trim() || x.phone.trim())) {
+      const phone = toE164(l.phone);
+      if (!l.name.trim() || !phone) {
+        return action.setError('Give each trek lead a name and a valid mobile number.');
+      }
+      nextLeads.push({ name: l.name.trim(), phone });
+    }
+    if (JSON.stringify(nextLeads) !== JSON.stringify(batch.leads)) body.leads = nextLeads;
+
+    const pickups = Object.entries(times)
+      .filter(([, t]) => t)
+      .map(([pickupPointId, t]) => ({ pickupPointId, pickupAt: istLocalToIso(t) }));
+    if (pickups.some((p) => !p.pickupAt)) return action.setError('Check the pickup times.');
+    const pickupsChanged =
+      JSON.stringify(
+        Object.entries(times)
+          .filter(([, t]) => t)
+          .sort(),
+      ) !== JSON.stringify(Object.entries(initialTimes).sort());
+
+    if (Object.keys(body).length === 0 && !pickupsChanged)
+      return action.setError('Nothing changed.');
     await action.run(async () => {
-      await call(`/batches/${batch.id}`, OrganizerBatch, { method: 'PATCH', body });
+      if (Object.keys(body).length) {
+        await call(`/batches/${batch.id}`, OrganizerBatch, { method: 'PATCH', body });
+      }
+      if (pickupsChanged) {
+        await call(`/batches/${batch.id}/pickups`, OrganizerBatch, {
+          method: 'PUT',
+          body: { pickups },
+        });
+      }
       await onSaved();
-    }, 'Saved.');
+    });
   }
 
   const field = (k: keyof typeof f) => ({
     value: f[k],
     onChange: (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value }),
   });
+  const setLead = (key: number, k: 'name' | 'phone', v: string) =>
+    setLeads(leads.map((l) => (l.key === key ? { ...l, [k]: v } : l)));
 
   return (
     <form onSubmit={save} className="card stack">
-      <h2>Edit batch</h2>
+      <h2 style={{ margin: 0 }}>Edit batch</h2>
       {datesLocked && (
         <p className="small muted" style={{ margin: 0 }}>
           Departure and return are locked because seats are booked. Price changes apply to new
@@ -373,78 +493,88 @@ function EditBatch({ batch, onSaved }: { batch: OrganizerBatch; onSaved: () => P
           <input id="eb-max" type="number" min={1} max={50} {...field('maxSeatsPerBooking')} />
         </div>
       </div>
+
+      <div className="stack" style={{ gap: 8 }}>
+        <strong className="small">Pickup times</strong>
+        {!trek || trek.pickupPoints.length === 0 ? (
+          <span className="small muted">
+            No pickup points on this trek yet. Add them when adding dates, or under Edit trek.
+          </span>
+        ) : (
+          <>
+            <span className="small muted">
+              Leave a time empty to skip that pickup for this batch.
+            </span>
+            {trek.pickupPoints.map((p) => (
+              <div key={p.id} className="row-inputs">
+                <span>{p.name}</span>
+                <input
+                  type="datetime-local"
+                  aria-label={`${p.name} pickup time`}
+                  value={times[p.id] ?? ''}
+                  onChange={(e) => setTimes({ ...times, [p.id]: e.target.value })}
+                />
+                <span />
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+
+      <div className="stack" style={{ gap: 8 }}>
+        <strong className="small">Trek leads</strong>
+        {leads.map((l, i) => (
+          <div key={l.key} className="row-inputs">
+            <input
+              aria-label={`Trek lead ${i + 1} name`}
+              maxLength={80}
+              placeholder="Name"
+              value={l.name}
+              onChange={(e) => setLead(l.key, 'name', e.target.value)}
+            />
+            <input
+              aria-label={`Trek lead ${i + 1} mobile`}
+              type="tel"
+              inputMode="tel"
+              placeholder="Mobile, e.g. 98450 12345"
+              value={l.phone}
+              onChange={(e) => setLead(l.key, 'phone', e.target.value)}
+            />
+            <button
+              type="button"
+              className="small secondary"
+              aria-label={`Remove trek lead ${i + 1}`}
+              onClick={() => setLeads(leads.filter((x) => x.key !== l.key))}
+            >
+              <Icon name="x" size={16} />
+            </button>
+          </div>
+        ))}
+        {leads.length < 5 && (
+          <button
+            type="button"
+            className="link small"
+            style={{ alignSelf: 'flex-start' }}
+            onClick={() => setLeads([...leads, { key: leadKey++, name: '', phone: '' }])}
+          >
+            + Add trek lead
+          </button>
+        )}
+      </div>
+
       <div className="field">
         <label htmlFor="eb-notes">Notes for customers</label>
         <textarea id="eb-notes" {...field('notes')} />
       </div>
       <Outcome error={action.error} message={action.message} />
-      <button type="submit" disabled={action.pending} style={{ alignSelf: 'flex-start' }}>
-        Save changes
-      </button>
-    </form>
-  );
-}
-
-function BatchPickups({
-  batch,
-  trek,
-  onSaved,
-}: {
-  batch: OrganizerBatch;
-  trek: OrganizerTrek;
-  onSaved: () => Promise<void>;
-}) {
-  const { call } = useOrg();
-  const action = useAction();
-  const [times, setTimes] = useState<Record<string, string>>(() =>
-    Object.fromEntries(batch.pickups.map((p) => [p.pickupPointId, isoToIstLocal(p.pickupAt)])),
-  );
-
-  if (trek.pickupPoints.length === 0) {
-    return (
-      <p className="muted small">
-        No pickup points on this trek yet.{' '}
-        <Link href={`/dashboard/treks/${trek.id}`}>Add pickup points</Link>
-      </p>
-    );
-  }
-
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    const pickups = Object.entries(times)
-      .filter(([, t]) => t)
-      .map(([pickupPointId, t]) => ({ pickupPointId, pickupAt: istLocalToIso(t) }));
-    if (pickups.some((p) => !p.pickupAt)) return action.setError('Check the pickup times.');
-    await action.run(async () => {
-      await call(`/batches/${batch.id}/pickups`, OrganizerBatch, {
-        method: 'PUT',
-        body: { pickups },
-      });
-      await onSaved();
-    }, 'Pickup times saved.');
-  }
-
-  return (
-    <form onSubmit={save} className="card stack">
-      <h2>Pickup times</h2>
-      <p className="small muted" style={{ margin: 0 }}>
-        Leave a time empty to not offer that pickup for this batch.
-      </p>
-      {trek.pickupPoints.map((p) => (
-        <div key={p.id} className="form-grid">
-          <span style={{ alignSelf: 'center' }}>{p.name}</span>
-          <input
-            type="datetime-local"
-            aria-label={`${p.name} pickup time`}
-            value={times[p.id] ?? ''}
-            onChange={(e) => setTimes({ ...times, [p.id]: e.target.value })}
-          />
-        </div>
-      ))}
-      <Outcome error={action.error} message={action.message} />
-      <button type="submit" disabled={action.pending} style={{ alignSelf: 'flex-start' }}>
-        Save pickups
-      </button>
+      <div className="cluster">
+        <button type="submit" disabled={action.pending}>
+          Save changes
+        </button>
+        <button type="button" className="link" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
     </form>
   );
 }

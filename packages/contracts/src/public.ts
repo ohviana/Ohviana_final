@@ -127,24 +127,15 @@ export type PublicBatchQuery = z.infer<typeof PublicBatchQuery>;
 export const PublicBatchList = paginated(PublicBatch);
 
 /**
- * One departure day (IST) of a trek, summarised across organizers: what the date picker on the
- * trek page shows before anyone chooses a date. Sold-out and closed days are included.
+ * Departures across all treks (the Explore page), soonest first. `query` matches the trek, its
+ * district or the organizer; one day is `from` = `to`.
  */
-export const TrekDate = z.object({
-  date: IstDate,
-  departureCount: z.number().int(),
-  organizerCount: z.number().int(),
-  /** At least one departure that day can still be booked. */
-  bookable: z.boolean(),
-  /** Cheapest bookable departure that day (null when none is bookable). */
-  minPricePaise: z.number().int().nullable(),
-  /** Free seats across that day's bookable departures. */
-  seatsLeft: z.number().int(),
+export const BatchSearchQuery = PublicBatchQuery.extend({
+  query: z.string().trim().min(2).max(100).optional(),
+  district: z.string().trim().min(1).max(80).optional(),
+  difficulty: z.enum(DIFFICULTIES).optional(),
 });
-export type TrekDate = z.infer<typeof TrekDate>;
-
-export const TrekDateList = z.object({ items: z.array(TrekDate) });
-export type TrekDateList = z.infer<typeof TrekDateList>;
+export type BatchSearchQuery = z.infer<typeof BatchSearchQuery>;
 
 // ---------- Organizers ----------
 
@@ -159,6 +150,21 @@ export const PublicOrganizer = PublicOrganizerRef.extend({
   upcomingBatchCount: z.number().int(),
 });
 export type PublicOrganizer = z.infer<typeof PublicOrganizer>;
+
+/** The organizer's public page: their profile plus a track record. */
+export const PublicOrganizerDetail = PublicOrganizer.extend({
+  stats: z.object({
+    /** Departures that went ahead and are over (not cancelled). */
+    completedBatches: z.number().int(),
+    /** Trekkers on those departures (confirmed seats). */
+    trekkersHosted: z.number().int(),
+    /** Different treks (destinations) they currently run. */
+    treksOffered: z.number().int(),
+    /** Year they joined Ohviana. */
+    memberSince: z.number().int(),
+  }),
+});
+export type PublicOrganizerDetail = z.infer<typeof PublicOrganizerDetail>;
 
 export const PublicOrganizerList = paginated(PublicOrganizer);
 

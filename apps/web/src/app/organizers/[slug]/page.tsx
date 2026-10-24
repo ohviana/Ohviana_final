@@ -1,15 +1,18 @@
 import type { Metadata } from 'next';
-import { PublicBatchList, PublicOrganizer } from '@ohviana/contracts';
-import { BatchFilters } from '@/components/BatchFilters';
-import { BatchList } from '@/components/BatchList';
-import { apiFetch, apiFetchOrNotFound, qs } from '@/lib/api';
-import { isoDay, one, type SearchParams } from '@/lib/params';
 import Link from 'next/link';
+import { PublicBatchList, PublicOrganizerDetail } from '@ohviana/contracts';
+import { DepartureGroups, OrgMark } from '@/components/DepartureGroups';
+import { Icon, type IconName } from '@/components/Icon';
+import { apiFetch, apiFetchOrNotFound, qs } from '@/lib/api';
+import { one, type SearchParams } from '@/lib/params';
 
 type Params = Promise<{ slug: string }>;
 
+/** Departures fetched per page; grouped by day on screen. */
+const PAGE = 40;
+
 const getOrganizer = (slug: string) =>
-  apiFetchOrNotFound(`/v1/organizers/${encodeURIComponent(slug)}`, PublicOrganizer, {
+  apiFetchOrNotFound(`/v1/organizers/${encodeURIComponent(slug)}`, PublicOrganizerDetail, {
     next: { revalidate: 60 },
   });
 
@@ -23,6 +26,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   };
 }
 
+/** An organizer's public page: who they are, their track record, and their departures. */
 export default async function OrganizerPage({
   params,
   searchParams,
@@ -31,54 +35,104 @@ export default async function OrganizerPage({
   searchParams: SearchParams;
 }) {
   const { slug } = await params;
-  const sp = await searchParams;
-  const from = isoDay(sp.from);
-  const to = isoDay(sp.to);
-  const sort = one(sp.sort) === 'price_asc' ? 'price_asc' : 'departure_asc';
-  const cursor = one(sp.cursor);
+  const cursor = one((await searchParams).cursor);
 
-  const organizer = await getOrganizer(slug);
+  const o = await getOrganizer(slug);
   const batches = await apiFetch(
-    `/v1/organizers/${encodeURIComponent(slug)}/batches${qs({ from, to, sort, cursor, limit: 20 })}`,
+    `/v1/organizers/${encodeURIComponent(slug)}/batches${qs({ cursor, limit: PAGE })}`,
     PublicBatchList,
     { next: { revalidate: 30 } },
   ).catch(() => null);
 
+  // A brand-new organizer's zeros say nothing good: show their record once they have one.
+  const isNew = o.stats.completedBatches === 0;
+  const stats: { icon: IconName; value: string; label: string; hide?: boolean }[] = [
+    {
+      hide: isNew,
+      icon: 'check',
+      value: o.stats.completedBatches.toLocaleString('en-IN'),
+      label: o.stats.completedBatches === 1 ? 'trek completed' : 'treks completed',
+    },
+    {
+      hide: isNew,
+      icon: 'users',
+      value: o.stats.trekkersHosted.toLocaleString('en-IN'),
+      label: o.stats.trekkersHosted === 1 ? 'trekker hosted' : 'trekkers hosted',
+    },
+    {
+      icon: 'mountain',
+      value: o.stats.treksOffered.toLocaleString('en-IN'),
+      label: o.stats.treksOffered === 1 ? 'trek offered' : 'treks offered',
+    },
+    { icon: 'calendar', value: String(o.upcomingBatchCount), label: 'upcoming departures' },
+  ];
+
   return (
     <div className="container stack-lg">
-      <header className="stack">
-        <span className="badge ok" style={{ alignSelf: 'flex-start' }}>
-          Verified organizer
-        </span>
-        <h1 style={{ margin: 0 }}>{organizer.name}</h1>
-        {organizer.tagline && (
-          <p className="muted" style={{ margin: 0 }}>
-            {organizer.tagline}
-          </p>
-        )}
-        {organizer.city && <span className="small muted">Based in {organizer.city}</span>}
+      <header className="card org-hero">
+        <OrgMark name={o.name} logoUrl={o.logoUrl} size={84} />
+        <div className="stack" style={{ gap: 6, minWidth: 0 }}>
+          <span className="cluster" style={{ gap: 6 }}>
+            <span className="badge ok">
+              <Icon name="shield" size={13} /> Verified organizer
+            </span>
+            {isNew && <span className="badge warn">New on Ohviana</span>}
+          </span>
+          <h1 style={{ margin: 0 }}>{o.name}</h1>
+          {o.tagline && (
+            <p className="lead" style={{ margin: 0 }}>
+              {o.tagline}
+            </p>
+          )}
+          <span className="small muted">
+            {[o.city && `Based in ${o.city}`, `On Ohviana since ${o.stats.memberSince}`]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+        </div>
       </header>
 
-      {organizer.description && (
-        <p style={{ maxWidth: 720, whiteSpace: 'pre-line' }}>{organizer.description}</p>
+      <ul className="org-stats" aria-label="Track record">
+        {stats
+          .filter((s) => !s.hide)
+          .map((s) => (
+            <li key={s.label} className="card">
+              <Icon name={s.icon} size={18} />
+              <strong>{s.value}</strong>
+              <span className="muted small">{s.label}</span>
+            </li>
+          ))}
+      </ul>
+
+      {o.description && (
+        <section className="card stack">
+          <h2 style={{ margin: 0 }}>About {o.name}</h2>
+          <p style={{ margin: 0, whiteSpace: 'pre-line', maxWidth: 760 }}>{o.description}</p>
+        </section>
       )}
 
       <section className="stack">
-        <h2>Upcoming departures</h2>
-        <BatchFilters action={`/organizers/${organizer.slug}`} from={from} to={to} sort={sort} />
+        <h2 style={{ margin: 0 }}>Upcoming departures</h2>
         {batches === null ? (
           <p className="notice danger">Departures are unavailable right now.</p>
         ) : batches.items.length === 0 ? (
-          <p className="muted">No upcoming departures{from || to ? ' in those dates' : ''}.</p>
+          <div className="empty-state">
+            <span className="icon-circle">
+              <Icon name="calendar" size={26} />
+            </span>
+            <strong>No upcoming departures right now</strong>
+            <span className="muted small">{o.name} adds new dates regularly. Check back soon.</span>
+          </div>
         ) : (
           <>
-            <BatchList batches={batches.items} showOrganizer={false} showTrek />
+            <DepartureGroups batches={batches.items} />
             {batches.nextCursor && (
               <Link
                 className="btn secondary"
-                href={`/organizers/${organizer.slug}${qs({ from, to, sort, cursor: batches.nextCursor })}`}
+                style={{ alignSelf: 'flex-start' }}
+                href={`/organizers/${o.slug}${qs({ cursor: batches.nextCursor })}`}
               >
-                More departures
+                Later departures →
               </Link>
             )}
           </>

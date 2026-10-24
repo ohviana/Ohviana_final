@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { batches, bookingEvents, bookings, outboxEvents } from '@ohviana/db';
+import { batches, bookingEvents, bookings, outboxEvents, users } from '@ohviana/db';
 import type { OrganizerStatus } from '@ohviana/shared';
 import { createFixtures, createTestApp, createTestKeys, type TestApp } from './helpers';
 
@@ -219,71 +219,47 @@ describe('profile', () => {
 });
 
 describe('members', () => {
-  it('adds an existing user by email and lists the team', async () => {
+  it('adds an existing user as co-owner by email and lists the team', async () => {
     const { headers } = await orgWithOwner();
     const newbie = await fx.user({ email: `newbie-${fx.tag}@test.ohviana.dev` });
 
     const res = await call('POST', '/members', headers, {
       email: `NEWBIE-${fx.tag}@test.ohviana.dev`,
-      role: 'staff',
     });
     expect(res.statusCode).toBe(201);
     expect(res.json().items).toEqual(
-      expect.arrayContaining([expect.objectContaining({ userId: newbie, role: 'staff' })]),
+      expect.arrayContaining([expect.objectContaining({ userId: newbie, role: 'co_owner' })]),
     );
     expect(
-      (
-        await call('POST', '/members', headers, {
-          email: `newbie-${fx.tag}@test.ohviana.dev`,
-          role: 'staff',
-        })
-      ).statusCode,
+      (await call('POST', '/members', headers, { email: `newbie-${fx.tag}@test.ohviana.dev` }))
+        .statusCode,
     ).toBe(409);
     expect(
-      (await call('POST', '/members', headers, { email: 'nobody@example.com', role: 'staff' }))
-        .statusCode,
+      (await call('POST', '/members', headers, { email: 'nobody@example.com' })).statusCode,
     ).toBe(404);
   });
 
-  it('only lets owners manage members', async () => {
+  it("doesn't let trek leads manage members", async () => {
     const { org } = await orgWithOwner();
-    const manager = await fx.user();
-    await fx.member(org, manager, 'manager');
-    const res = await call('POST', '/members', await headersFor(manager), {
+    const lead = await fx.user();
+    await fx.member(org, lead, 'trek_lead');
+    const res = await call('POST', '/members', await headersFor(lead), {
       email: 'x@example.com',
-      role: 'staff',
     });
     expect(res.statusCode).toBe(403);
   });
 
-  it('never removes or demotes the last owner', async () => {
+  it('never changes or removes the owner', async () => {
     const { owner, headers } = await orgWithOwner();
-    expect((await call('DELETE', `/members/${owner}`, headers)).statusCode).toBe(409);
+    expect((await call('DELETE', `/members/${owner}`, headers)).statusCode).toBe(403);
     expect(
-      (await call('PATCH', `/members/${owner}`, headers, { role: 'manager' })).statusCode,
-    ).toBe(409);
+      (await call('PATCH', `/members/${owner}`, headers, { role: 'co_owner' })).statusCode,
+    ).toBe(403);
   });
 
-  it('lets only one of two owners demoting each other at once succeed', async () => {
-    const { org, owner: a, headers: aHeaders } = await orgWithOwner();
-    const b = await fx.user();
-    await fx.member(org, b, 'owner');
-    const bHeaders = await headersFor(b);
-
-    const results = await Promise.all([
-      call('PATCH', `/members/${b}`, aHeaders, { role: 'manager' }),
-      call('PATCH', `/members/${a}`, bHeaders, { role: 'manager' }),
-    ]);
-    const codes = results.map((r) => r.statusCode).sort();
-    // The loser either hits the last-owner rule (409) or has just lost owner rights (403).
-    expect(codes[0]).toBe(200);
-    expect([403, 409]).toContain(codes[1]);
-
-    const team =
-      (await call('GET', '/members', aHeaders)).statusCode === 200
-        ? await call('GET', '/members', aHeaders)
-        : await call('GET', '/members', bHeaders);
-    expect(team.json().items.filter((m: { role: string }) => m.role === 'owner')).toHaveLength(1);
+  it('allows only one owner per organizer', async () => {
+    const { org } = await orgWithOwner();
+    await expect(fx.member(org, await fx.user(), 'owner')).rejects.toThrow();
   });
 });
 
@@ -300,23 +276,43 @@ describe('trek templates', () => {
     expect(res.statusCode, res.body).toBe(201);
     expect(res.json()).toMatchObject({
       slug: 'kudremukh-weekend',
-      status: 'draft',
+      // No drafts: saved with a destination means live.
+      status: 'published',
       catalogTrekName: `Kudremukh ${fx.tag}`,
       inclusions: ['Transport', 'Meals'],
       pickupPoints: [],
     });
   });
 
-  it('refuses unpublished catalog treks and publishing without a catalog link', async () => {
+  it('refuses unpublished catalog treks and drafts', async () => {
     const { headers } = await orgWithOwner();
     const draft = await fx.catalogTrek({ status: 'draft' });
     expect(
       (await call('POST', '/treks', headers, { title: 'X', catalogTrekId: draft.id })).statusCode,
     ).toBe(400);
+    const trek = await publishedTrek(headers);
     expect(
-      (await call('POST', '/treks', headers, { title: 'Yelagiri', status: 'published' }))
-        .statusCode,
-    ).toBe(409);
+      (await call('PATCH', `/treks/${trek.id}`, headers, { status: 'draft' })).statusCode,
+    ).toBe(400);
+  });
+
+  it('archives and restores a trek', async () => {
+    const { headers } = await orgWithOwner();
+    const trek = await publishedTrek(headers);
+    const archived = await call('PATCH', `/treks/${trek.id}`, headers, { status: 'archived' });
+    expect(archived.json().status).toBe('archived');
+    const restored = await call('PATCH', `/treks/${trek.id}`, headers, { status: 'published' });
+    expect(restored.json().status).toBe('published');
+  });
+
+  it('puts a trek waiting for its destination live once it gets one', async () => {
+    const { headers } = await orgWithOwner();
+    const waiting = (await call('POST', '/treks', headers, { title: `Waiting ${fx.tag}` })).json();
+    expect(waiting.status).toBe('draft');
+    const linked = await call('PATCH', `/treks/${waiting.id}`, headers, {
+      catalogTrekName: `Linked Peak ${fx.tag}`,
+    });
+    expect(linked.json()).toMatchObject({ status: 'published', catalogTrekId: expect.any(String) });
   });
 
   it("links a draft to the organizer's own catalog request, not another organizer's", async () => {
@@ -728,12 +724,14 @@ describe('batches', () => {
     ).toBe(404);
   });
 
-  it('lets staff read but not write', async () => {
+  it('lets a trek lead read the batch they lead but not change it', async () => {
     const { org, headers } = await orgWithOwner();
     const trek = await publishedTrek(headers);
-    const batch = await draftBatch(headers, trek.id);
+    const phone = `+9172${String(Date.now()).slice(-8)}`;
+    const batch = await draftBatch(headers, trek.id, { leads: [{ name: 'Lead', phone }] });
     const staff = await fx.user();
-    await fx.member(org, staff, 'staff');
+    await app.db.update(users).set({ phone }).where(eq(users.id, staff));
+    await fx.member(org, staff, 'trek_lead');
     const staffHeaders = await headersFor(staff);
     expect((await call('GET', `/batches/${batch.id}`, staffHeaders)).statusCode).toBe(200);
     expect(
@@ -812,16 +810,25 @@ describe('dashboard', () => {
     await draftBatch(headers, trek.id);
     const live = await publishedBatch(headers, trek.id, { pricePaise: 100_000 });
     await fx.booking(await batchRow(live.id), 3);
+    const added = await call('POST', `/batches/${live.id}/members`, headers, {
+      contact: { name: 'Asha Rao', phone: '+919886011223' },
+      guests: [{ fullName: 'Asha Rao' }],
+      unitPricePaise: 90_000,
+    });
+    expect(added.statusCode, added.body).toBe(201);
 
     const res = await call('GET', '/dashboard/summary', headers);
     expect(res.json()).toMatchObject({
       batches: { draft: 1, upcoming: 1, sold_out: 0, cancelled: 0 },
       bookings: {
-        confirmed: 1,
-        seatsSold: 3,
-        grossPaise: 300_000,
-        marketplaceGrossPaise: 300_000,
-        directGrossPaise: 0,
+        confirmed: 2,
+        seatsSold: 4,
+        grossPaise: 390_000,
+        channels: {
+          marketplace: { confirmed: 1, seatsSold: 3, grossPaise: 300_000 },
+          directLink: { confirmed: 0, seatsSold: 0, grossPaise: 0, commissionPaise: 0 },
+          addedByYou: { confirmed: 1, seatsSold: 1, grossPaise: 90_000, commissionPaise: 0 },
+        },
       },
     });
   });

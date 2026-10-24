@@ -550,16 +550,16 @@ describe('organizer view', () => {
     expect(res.body).toContain(`"'=HYPERLINK(""evil"")"`);
   });
 
-  it('cancels a booking (managers yes, staff no) and hides other organizers bookings', async () => {
+  it('cancels a booking (owners yes, trek leads no) and hides other organizers bookings', async () => {
     const s = await setup();
     const batch = await makeBatch(s);
     const created = (await book(bookingBody(batch.id, 2))).json();
     const url = `/v1/organizer/bookings/${created.bookingReference}`;
 
-    const staff = await fx.user();
-    await fx.member(s.org, staff, 'staff');
-    const staffHeaders = { authorization: `Bearer ${await keys.sign({ sub: staff })}` };
-    expect((await app.inject({ method: 'GET', url, headers: staffHeaders })).statusCode).toBe(200);
+    const lead = await fx.user();
+    await fx.member(s.org, lead, 'trek_lead');
+    const staffHeaders = { authorization: `Bearer ${await keys.sign({ sub: lead })}` };
+    expect((await app.inject({ method: 'GET', url, headers: staffHeaders })).statusCode).toBe(403);
     expect(
       (
         await app.inject({

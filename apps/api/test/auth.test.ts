@@ -21,7 +21,7 @@ beforeAll(async () => {
       );
       a.get(
         '/test/org/read',
-        { onRequest: a.guards.organizer('bookings:read') },
+        { onRequest: a.guards.organizer('batches:read') },
         async (req) => req.organizer,
       );
       a.get(
@@ -141,7 +141,7 @@ describe('/v1/me', () => {
   it('lists memberships and admin status', async () => {
     const userId = await fx.user({ admin: true });
     const orgId = await fx.organizer({ name: `Membership Org ${fx.tag}` });
-    await fx.member(orgId, userId, 'manager');
+    await fx.member(orgId, userId, 'co_owner');
 
     const res = await app.inject({
       method: 'GET',
@@ -150,7 +150,7 @@ describe('/v1/me', () => {
     });
     expect(res.json()).toMatchObject({
       isAdmin: true,
-      memberships: [{ organizerId: orgId, role: 'manager', status: 'approved' }],
+      memberships: [{ organizerId: orgId, role: 'co_owner', status: 'approved' }],
     });
   });
 });
@@ -190,14 +190,14 @@ describe('organizer guard', () => {
       headers: bearer(await tokenFor(user)),
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ organizerId: org, role: 'owner', status: 'approved' });
+    expect(res.json()).toMatchObject({ organizerId: org, role: 'owner', status: 'approved' });
   });
 
   it('requires x-organizer-id when the user belongs to several organizers', async () => {
     const user = await fx.user();
     const [a, b] = [await fx.organizer(), await fx.organizer()];
     await fx.member(a, user, 'owner');
-    await fx.member(b, user, 'staff');
+    await fx.member(b, user, 'trek_lead');
     const headers = bearer(await tokenFor(user));
 
     expect((await app.inject({ method: 'GET', url: '/test/org/read', headers })).statusCode).toBe(
@@ -209,7 +209,7 @@ describe('organizer guard', () => {
       url: '/test/org/read',
       headers: { ...headers, 'x-organizer-id': b },
     });
-    expect(res.json()).toMatchObject({ organizerId: b, role: 'staff' });
+    expect(res.json()).toMatchObject({ organizerId: b, role: 'trek_lead' });
   });
 
   it("blocks access to an organizer the user doesn't belong to (cross-tenant)", async () => {
@@ -229,7 +229,7 @@ describe('organizer guard', () => {
   it('enforces role permissions', async () => {
     const user = await fx.user();
     const org = await fx.organizer();
-    await fx.member(org, user, 'staff');
+    await fx.member(org, user, 'trek_lead');
     const headers = bearer(await tokenFor(user));
 
     expect((await app.inject({ method: 'GET', url: '/test/org/read', headers })).statusCode).toBe(
@@ -240,16 +240,21 @@ describe('organizer guard', () => {
     );
   });
 
-  it('keeps member management with owners', async () => {
-    const user = await fx.user();
+  it('keeps member management with owners and co-owners', async () => {
     const org = await fx.organizer();
-    await fx.member(org, user, 'manager');
-    const res = await app.inject({
-      method: 'GET',
-      url: '/test/org/members',
-      headers: bearer(await tokenFor(user)),
-    });
-    expect(res.statusCode).toBe(403);
+    const status = async (role: 'co_owner' | 'trek_lead') => {
+      const user = await fx.user();
+      await fx.member(org, user, role);
+      return (
+        await app.inject({
+          method: 'GET',
+          url: '/test/org/members',
+          headers: bearer(await tokenFor(user)),
+        })
+      ).statusCode;
+    };
+    expect(await status('co_owner')).toBe(200);
+    expect(await status('trek_lead')).toBe(403);
   });
 
   it('makes suspended organizers read-only', async () => {

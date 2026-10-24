@@ -353,8 +353,9 @@ export async function createTrek(
           ...link,
           organizerId,
           slug,
-          // Publishing goes through the batch below, which publishes the trek too.
-          status: publish && !batch ? 'published' : (fields.status ?? 'draft'),
+          // No drafts: with a destination the trek is live (customers still only see it once
+          // the organizer is approved and it has a published batch).
+          status: link.catalogTrekId ? 'published' : 'draft',
         })
         .returning()) as [TrekRow];
     } catch (err) {
@@ -421,10 +422,15 @@ export async function updateTrek(
     }
 
     const link = await resolveCatalogLink(tx, organizerId, input);
+    // A trek that was waiting for its destination goes live once it has one.
+    const becomesLive =
+      !input.status &&
+      current.status === 'draft' &&
+      ('catalogTrekId' in link ? link.catalogTrekId : current.catalogTrekId);
     try {
       const [updated] = await tx
         .update(organizerTreks)
-        .set({ ...trekColumns(input), ...link })
+        .set({ ...trekColumns(input), ...link, ...(becomesLive ? { status: 'published' } : {}) })
         .where(and(eq(organizerTreks.id, trekId), eq(organizerTreks.organizerId, organizerId)))
         .returning();
       return updated!;

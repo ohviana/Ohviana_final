@@ -3,13 +3,13 @@ import { Icon } from './Icon';
 
 interface Props {
   query?: string | undefined;
-  from?: string | undefined;
-  to?: string | undefined;
+  /** One day, YYYY-MM-DD (IST). */
+  date?: string | undefined;
   difficulty?: string | undefined;
 }
 
 /** Plain GET form: works before (and without) JavaScript, and the URL is shareable. */
-export function SearchForm({ query, from, to, difficulty }: Props) {
+export function SearchForm({ query, date, difficulty }: Props) {
   const min = todayIst();
   return (
     <form action="/search" method="get" className="search-grid" role="search">
@@ -29,17 +29,12 @@ export function SearchForm({ query, from, to, difficulty }: Props) {
         </div>
       </div>
       <div className="field">
-        <label htmlFor="from">From</label>
+        <label htmlFor="date">
+          Date <span className="hint">(optional)</span>
+        </label>
         <div className="input-icon">
           <Icon name="calendar" />
-          <input id="from" name="from" type="date" min={min} defaultValue={from} />
-        </div>
-      </div>
-      <div className="field">
-        <label htmlFor="to">To</label>
-        <div className="input-icon">
-          <Icon name="calendar" />
-          <input id="to" name="to" type="date" min={min} defaultValue={to} />
+          <input id="date" name="date" type="date" min={min} defaultValue={date} />
         </div>
       </div>
       <button type="submit">

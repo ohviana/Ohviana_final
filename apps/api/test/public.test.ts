@@ -134,6 +134,7 @@ async function buildWorld() {
     org2,
     pending,
     org1Slug: await slugOf(org1),
+    org2Slug: await slugOf(org2),
     pendingSlug: await slugOf(pending),
     b,
   };
@@ -216,38 +217,33 @@ describe('comparing departures of a trek', () => {
   });
 });
 
-describe('departure days of a trek', () => {
-  it('summarises each IST day across organizers, including sold-out and closed days', async () => {
-    const res = await get(`/v1/treks/${w.alpha.slug}/dates`);
-    expect(res.statusCode).toBe(200);
-    const byDay = new Map(
-      (res.json().items as { date: string; departureCount: number }[]).map(
-        (d) => [d.date, d] as const,
-      ),
+describe('departure search (Explore page)', () => {
+  const search = (qs: string) => get(`/v1/batches?${qs}`);
+
+  it('finds departures by trek name, organizer or day, soonest first', async () => {
+    const byTrek = await search(`query=${encodeURIComponent(`Alpha Peak ${fx.tag}`)}`);
+    expect(byTrek.statusCode, byTrek.body).toBe(200);
+    expect(ids(byTrek.json())).toEqual([w.b.org2Alpha.id, w.b.org1Alpha.id]);
+
+    const byOrg = ids((await search(`query=${encodeURIComponent(`Org One ${fx.tag}`)}`)).json());
+    // Typo-tolerant, so similar names may also match; the organizer's own departures, in order.
+    expect(byOrg.filter((id) => [w.b.org1Alpha.id, w.b.bravo.id].includes(id))).toEqual([
+      w.b.org1Alpha.id,
+      w.b.bravo.id,
+    ]);
+
+    const day = istDay(w.b.org1Alpha.departureAt);
+    const oneDay = ids(
+      (await search(`query=${encodeURIComponent(fx.tag)}&from=${day}&to=${day}`)).json(),
     );
-    expect(byDay.get(istDay(w.b.org2Alpha.departureAt))).toMatchObject({
-      departureCount: 1,
-      organizerCount: 1,
-      bookable: true,
-      minPricePaise: 250_000,
-      seatsLeft: 10,
-    });
-    expect(byDay.get(istDay(w.b.soldOut.departureAt))).toMatchObject({
-      bookable: false,
-      minPricePaise: null,
-      seatsLeft: 0,
-    });
-    expect(byDay.get(istDay(w.b.closed.departureAt))).toMatchObject({ bookable: false });
-    // Hidden departures (draft, pending/suspended organizer, draft template, cancelled) never count.
-    const total = [...byDay.values()].reduce((n, d) => n + d.departureCount, 0);
-    expect(total).toBe(4);
-    const days = [...byDay.keys()];
-    expect(days).toEqual([...days].sort());
+    expect(oneDay).toEqual([w.b.org1Alpha.id]);
   });
 
-  it('is 404 for unknown or unpublished treks', async () => {
-    expect((await get(`/v1/treks/${w.draftCatalog.slug}/dates`)).statusCode).toBe(404);
-    expect((await get('/v1/treks/no-such-trek/dates')).statusCode).toBe(404);
+  it('never shows hidden departures', async () => {
+    const all = ids((await search(`query=${encodeURIComponent(fx.tag)}&limit=100`)).json());
+    for (const hidden of [w.b.draft, w.b.pendingOrg, w.b.suspendedOrg, w.b.draftTemplate]) {
+      expect(all).not.toContain(hidden.id);
+    }
   });
 });
 
@@ -350,6 +346,21 @@ describe('organizers', () => {
     expect((await get(`/v1/organizers/${w.org1Slug}`)).json()).not.toHaveProperty('gstin');
     const res = await get(`/v1/organizers/${w.org1Slug}/batches`);
     expect(ids(res.json())).toEqual([w.b.org1Alpha.id, w.b.bravo.id]);
+  });
+
+  it('shows a track record: past departures that went ahead, trekkers and treks', async () => {
+    // A finished departure with 4 trekkers, and a cancelled one that must not count.
+    const t = await template(w.org2, w.alpha.id);
+    await batch(t, { departIn: -10 * DAY, cutoffIn: -11 * DAY, sold: 4 });
+    await batch(t, { departIn: -20 * DAY, cutoffIn: -21 * DAY, status: 'cancelled' });
+    const res = await get(`/v1/organizers/${w.org2Slug}`);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().stats).toEqual({
+      completedBatches: 1,
+      trekkersHosted: 4,
+      treksOffered: 1,
+      memberSince: new Date().getUTCFullYear(),
+    });
   });
 
   it('hides unapproved organizers', async () => {

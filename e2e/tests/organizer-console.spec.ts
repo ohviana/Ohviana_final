@@ -122,28 +122,23 @@ test('organizer + admin walkthrough, end to end', async ({ page }) => {
   await page
     .locator('#nt-photos')
     .setInputFiles({ name: 'bus.jpg', mimeType: 'image/jpeg', buffer: image });
-  await page.getByRole('button', { name: 'Publish trek' }).click();
-  await page.waitForURL(/\/dashboard\/treks\/[0-9a-f-]+\?created=published/);
-  await expect(page.getByText('Trek published. Add its dates below')).toBeVisible();
+  await page.getByRole('button', { name: 'Save trek' }).click();
+  await page.waitForURL(/\/dashboard\/treks\/[0-9a-f-]+\?created=1/);
+  await expect(page.getByText('Trek saved. Add its dates below')).toBeVisible();
   await expect(page.locator('.photo-slot img')).toHaveCount(1);
 
-  // Dates are added on the trek page (as a draft), then published from Batches.
+  // Dates are added on the trek page with pickups and a trek lead, and published right there.
   await page.getByRole('button', { name: '+ Add dates' }).click();
-  await page.getByLabel('First departure').fill(istLocal(10, '21:30'));
+  await page.getByLabel('Departure', { exact: true }).fill(istLocal(10, '21:30'));
   await page.getByLabel('Return', { exact: true }).fill(istLocal(12, '06:00'));
   await page.getByLabel('Price per person (₹)').fill('2499');
   await page.getByLabel('Seats', { exact: true }).fill('12');
-  await page.getByRole('button', { name: /Create draft batch/ }).click();
-  await page.getByRole('link', { name: 'Go to drafts →' }).click();
-  await page.waitForURL(/view=draft/);
-  await page
-    .getByRole('row')
-    .filter({ hasText: 'Kudremukh' })
-    .getByRole('button', { name: 'Publish' })
-    .click();
-  await expect(
-    page.getByRole('row').filter({ hasText: 'Kudremukh' }).getByRole('button', { name: 'Publish' }),
-  ).toHaveCount(0);
+  await page.getByLabel('Pickup 1 name').fill('Majestic Bus Stand');
+  await page.getByLabel('Pickup 1 time').fill(istLocal(10, '21:00'));
+  await page.getByLabel('Trek lead 1 name').fill('Ravi Kumar');
+  await page.getByLabel('Trek lead 1 mobile').fill('98450 12345');
+  await page.getByRole('button', { name: 'Publish', exact: true }).click();
+  await expect(page.getByText('Published 1 date. Trekkers can book now.')).toBeVisible();
 
   // 4. The batch got a generated name; run it again a week later (published straight away).
   // Batch names capitalise each word of the organizer name, so the tag too.
@@ -155,6 +150,7 @@ test('organizer + admin walkthrough, end to end', async ({ page }) => {
   await firstRow.getByRole('link').first().click();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(batchName);
   const batchPage = page.url();
+  await page.getByRole('button', { name: 'Run again' }).click();
   await page.getByRole('button', { name: 'Save & publish' }).click();
   await page.waitForURL((url) => url.href !== batchPage && url.pathname.includes('/batches/'));
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(batchName);
@@ -192,8 +188,10 @@ test('organizer + admin walkthrough, end to end', async ({ page }) => {
   const ravi = page.getByRole('row').filter({ hasText: 'Ravi Kumar' });
   await expect(ravi).toContainText('Your link');
   await expect(ravi).not.toContainText('commission');
+  await page.getByRole('button', { name: 'Add members' }).click();
   await page.getByLabel('Contact name').fill('Asha Rao');
   await page.getByLabel('Mobile', { exact: true }).fill('98860 11223');
+  await page.getByRole('button', { name: '+ Add another traveller' }).click();
   await page.getByLabel('Traveller 2 name').fill('Vikram S');
   await page.getByLabel('Traveller 2 mobile').fill('98860 44556');
   await page.getByRole('button', { name: 'Add 2 people' }).click();
@@ -209,9 +207,8 @@ test('organizer + admin walkthrough, end to end', async ({ page }) => {
   await page.getByRole('button', { name: 'Download attendees (CSV)' }).click();
   expect((await download).suggestedFilename()).toMatch(/_Batch_1_attendees\.csv$/);
 
-  // 8. Overview totals: ₹2,499 via the link + 2 × ₹2,499 added by the organizer.
+  // 8. Overview: ₹2,499 via the link and 2 × ₹2,499 added by the organizer, as separate rows.
   await page.goto('/dashboard');
-  await expect(
-    page.locator('.stat').filter({ hasText: 'Your links & added by you' }),
-  ).toContainText('₹7,497');
+  await expect(page.locator('.channel-row.direct')).toContainText('₹2,499');
+  await expect(page.locator('.channel-row.added')).toContainText('₹4,998');
 });

@@ -39,7 +39,16 @@ export async function apiFetch<T extends z.ZodType>(
     }
     throw new ApiError(res.status, 'INTERNAL_ERROR', `Request failed with ${res.status}`);
   }
-  return schema.parse(body);
+  const parsed = schema.safeParse(body);
+  if (parsed.success) return parsed.data;
+  // A response cached (`next.revalidate`) before the API changed shape, e.g. right after a
+  // deploy: fetch it fresh once rather than failing until the cache expires.
+  if (init.cache !== 'no-store') {
+    const fresh: RequestInit & { next?: unknown } = { ...init, cache: 'no-store' };
+    delete fresh.next;
+    return apiFetch(path, schema, fresh);
+  }
+  throw parsed.error;
 }
 
 /** Prefer the first specific validation issue over the generic "Request validation failed". */

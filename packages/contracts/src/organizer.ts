@@ -35,6 +35,8 @@ export const RegisterOrganizerRequest = z.object({
   tagline: Text(160).optional(),
   description: Text(5000).optional(),
   city: Text(80).optional(),
+  /** A link to the logo; to upload a photo instead, register first, then POST /profile/logo. */
+  logoUrl: z.url({ protocol: /^https$/ }).optional(),
   contactEmail: Email,
   contactPhone: PhoneE164,
   gstin: Gstin.optional(),
@@ -83,6 +85,7 @@ export type UpdateOrganizerProfileRequest = z.infer<typeof UpdateOrganizerProfil
 export const Member = z.object({
   userId: Uuid,
   email: z.string().nullable(),
+  phone: z.string().nullable(),
   fullName: z.string().nullable(),
   role: z.enum(ORGANIZER_ROLES),
   createdAt: Timestamp,
@@ -91,10 +94,27 @@ export type Member = z.infer<typeof Member>;
 
 export const MemberList = z.object({ items: z.array(Member) });
 
-export const AddMemberRequest = z.object({ email: Email, role: z.enum(ORGANIZER_ROLES) });
+/** Adds a co-owner: someone who has signed in to Ohviana once, found by email or mobile. */
+export const AddMemberRequest = z
+  .object({ email: Email.optional(), phone: PhoneE164.optional() })
+  .refine((v) => !!v.email !== !!v.phone, 'Give an email or a mobile number');
 export type AddMemberRequest = z.infer<typeof AddMemberRequest>;
 
-export const UpdateMemberRequest = z.object({ role: z.enum(ORGANIZER_ROLES) });
+/** The only role change the Team page makes: a trek lead becomes a co-owner. */
+export const UpdateMemberRequest = z.object({ role: z.literal('co_owner') });
+
+/** Someone named as a lead on the organizer's batches, by mobile. */
+export const TrekLeadSummary = z.object({
+  phone: z.string(),
+  name: z.string(),
+  batchCount: z.number().int(),
+  nextDepartureAt: Timestamp.nullable(),
+  /** active: signed in and has access; not_signed_in: gets access on first sign-in. */
+  status: z.enum(['active', 'not_signed_in', 'revoked']),
+});
+export type TrekLeadSummary = z.infer<typeof TrekLeadSummary>;
+export const TrekLeadList = z.object({ items: z.array(TrekLeadSummary) });
+export const TrekLeadRequest = z.object({ phone: PhoneE164 });
 
 export const MemberParams = z.object({ userId: Uuid });
 
@@ -160,7 +180,11 @@ const trekFields = {
   exclusions: StringList,
   thingsToCarry: StringList,
   cancellationPolicy: Text(5000).nullable(),
-  status: z.enum(CONTENT_STATUSES),
+  /**
+   * Treks have no drafts: saved with a destination means live. `archived` takes one down,
+   * `published` brings it back.
+   */
+  status: z.enum(['published', 'archived']),
 };
 
 export const UpdateOrganizerTrekRequest = z
@@ -255,6 +279,10 @@ export const BatchPickup = z.object({
   pickupAt: Timestamp,
 });
 
+/** A trek lead for one departure (shown to the organizer's team). */
+export const TripLead = z.object({ name: Text(80), phone: PhoneE164 });
+export type TripLead = z.infer<typeof TripLead>;
+
 export const OrganizerBatch = z.object({
   id: Uuid,
   organizerTrekId: Uuid,
@@ -279,6 +307,7 @@ export const OrganizerBatch = z.object({
   /** Token of the batch's booking link (created with the batch); bookings via it are 0% commission. */
   bookingLinkToken: z.string().nullable(),
   pickups: z.array(BatchPickup),
+  leads: z.array(z.object({ name: z.string(), phone: z.string() })),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -298,6 +327,7 @@ const batchCommon = {
   capacity: z.number().int().min(1).max(500),
   maxSeatsPerBooking: z.number().int().min(1).max(50).optional(),
   notes: Text(2000).optional(),
+  leads: z.array(TripLead).max(5).optional(),
 };
 
 export const CreateBatchRequest = Departure.extend({
@@ -313,15 +343,24 @@ export type CreateBatchRequest = z.infer<typeof CreateBatchRequest>;
 export const BulkCreateBatchesRequest = z.object({
   ...batchCommon,
   departures: z.array(Departure).min(1).max(52),
+  /**
+   * An existing pickup point by id, or a new one by name (reused if the trek already has a
+   * point with that name). Times are offsets from each departure.
+   */
   pickups: z
     .array(
-      z.object({
-        pickupPointId: Uuid,
-        minutesFromDeparture: z.number().int().min(-1440).max(1440),
-      }),
+      z
+        .object({
+          pickupPointId: Uuid.optional(),
+          name: Text(120).optional(),
+          minutesFromDeparture: z.number().int().min(-1440).max(1440),
+        })
+        .refine((p) => !!p.pickupPointId !== !!p.name, 'Give either pickupPointId or name'),
     )
     .max(20)
     .optional(),
+  /** Publish every new batch at once (organizer must be approved); default saves drafts. */
+  publish: z.boolean().optional(),
 });
 export type BulkCreateBatchesRequest = z.infer<typeof BulkCreateBatchesRequest>;
 
@@ -334,6 +373,7 @@ export const UpdateBatchRequest = z
     capacity: batchCommon.capacity,
     maxSeatsPerBooking: z.number().int().min(1).max(50),
     notes: Text(2000).nullable(),
+    leads: z.array(TripLead).max(5),
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, 'Provide at least one field to update');
@@ -412,16 +452,26 @@ export const DirectLinkList = z.object({ items: z.array(DirectLink) });
 
 // ---------- Dashboard ----------
 
+/** Confirmed bookings of one channel (or all of them). */
+const BookingTotals = z.object({
+  confirmed: z.number().int(),
+  seatsSold: z.number().int(),
+  grossPaise: z.number().int(),
+  commissionPaise: z.number().int(),
+});
+
 export const DashboardSummary = z.object({
   batches: z.record(z.enum(BATCH_VIEWS), z.number().int()),
-  bookings: z.object({
-    confirmed: z.number().int(),
-    seatsSold: z.number().int(),
-    grossPaise: z.number().int(),
-    marketplaceGrossPaise: z.number().int(),
-    /** Commission-free: direct-link and organizer-added bookings. */
-    directGrossPaise: z.number().int(),
-    commissionPaise: z.number().int(),
+  bookings: BookingTotals.extend({
+    /** Per booking source; the three add up to the totals above. */
+    channels: z.object({
+      /** Booked on Ohviana (the only channel that pays commission). */
+      marketplace: BookingTotals,
+      /** Booked through the organizer's own booking links. */
+      directLink: BookingTotals,
+      /** Added by the organizer (phone, WhatsApp, walk-in). */
+      addedByYou: BookingTotals,
+    }),
   }),
 });
 export type DashboardSummary = z.infer<typeof DashboardSummary>;

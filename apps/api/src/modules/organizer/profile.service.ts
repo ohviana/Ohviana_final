@@ -1,5 +1,14 @@
 import { and, asc, count, eq, sql } from 'drizzle-orm';
-import { organizerMembers, organizers, pgConstraintName, users, type Database } from '@ohviana/db';
+import {
+  media,
+  organizerMembers,
+  organizers,
+  pgConstraintName,
+  users,
+  type Database,
+} from '@ohviana/db';
+import { processImage } from '../../lib/images';
+import { mediaPaths } from '../media/service';
 import type {
   AddMemberRequest,
   Member,
@@ -7,9 +16,10 @@ import type {
   RegisterOrganizerRequest,
   UpdateOrganizerProfileRequest,
 } from '@ohviana/contracts';
-import { slugify, type OrganizerRole } from '@ohviana/shared';
+import { slugify } from '@ohviana/shared';
+import { revokeLead } from './leads.service';
 import { enqueueEvent } from '../../lib/audit';
-import { AppError, badRequest, conflict, notFound } from '../../lib/errors';
+import { AppError, badRequest, conflict, forbidden, notFound } from '../../lib/errors';
 
 /** Guards against one account spawning organizers in bulk. */
 export const MAX_OWNED_ORGANIZERS = 5;
@@ -82,6 +92,43 @@ export async function registerOrganizer(
   });
 }
 
+/**
+ * Stores an uploaded logo (resized and re-encoded like trek photos; metadata dropped) and
+ * points the profile at it.
+ */
+export async function setUploadedLogo(
+  db: Database,
+  organizerId: string,
+  file: Buffer,
+): Promise<OrganizerProfile> {
+  const image = await processImage(file);
+  const [row] = await db.transaction(async (tx) => {
+    const [stored] = await tx
+      .insert(media)
+      .values({
+        organizerId,
+        contentType: image.contentType,
+        width: image.width,
+        height: image.height,
+        bytes: image.bytes,
+        thumbBytes: image.thumbBytes,
+        sizeBytes: image.bytes.length,
+        sha256: image.sha256,
+      })
+      .returning({ id: media.id });
+    return (
+      tx
+        .update(organizers)
+        // The 480px variant is plenty for a logo shown at most ~60px.
+        .set({ logoUrl: mediaPaths(stored!.id).thumbUrl })
+        .where(eq(organizers.id, organizerId))
+        .returning()
+    );
+  });
+  if (!row) throw notFound('Organizer');
+  return toProfileDto(row);
+}
+
 export async function getProfile(db: Database, organizerId: string): Promise<OrganizerProfile> {
   const [row] = await db.select().from(organizers).where(eq(organizers.id, organizerId));
   if (!row) throw notFound('Organizer');
@@ -123,6 +170,7 @@ export async function listMembers(db: Database, organizerId: string): Promise<Me
     .select({
       userId: organizerMembers.userId,
       email: users.email,
+      phone: users.phone,
       fullName: users.fullName,
       role: organizerMembers.role,
       createdAt: organizerMembers.createdAt,
@@ -130,11 +178,17 @@ export async function listMembers(db: Database, organizerId: string): Promise<Me
     .from(organizerMembers)
     .innerJoin(users, eq(users.id, organizerMembers.userId))
     .where(eq(organizerMembers.organizerId, organizerId))
-    .orderBy(asc(organizerMembers.createdAt));
+    .orderBy(
+      sql`case ${organizerMembers.role} when 'owner' then 0 when 'co_owner' then 1 else 2 end`,
+      asc(organizerMembers.createdAt),
+    );
   return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
 }
 
-/** Adds an existing Ohviana account (they must have signed in once) to the organizer. */
+/**
+ * Adds a co-owner: an existing Ohviana account (they must have signed in once), found by email
+ * or mobile. A trek lead of this organizer is promoted.
+ */
 export async function addMember(
   db: Database,
   organizerId: string,
@@ -143,61 +197,67 @@ export async function addMember(
   const [user] = await db
     .select({ id: users.id })
     .from(users)
-    .where(sql`lower(${users.email}) = ${input.email}`);
+    .where(
+      input.email ? sql`lower(${users.email}) = ${input.email}` : eq(users.phone, input.phone!),
+    )
+    .orderBy(asc(users.createdAt))
+    .limit(1);
   if (!user) {
     throw new AppError(
       'NOT_FOUND',
-      'No Ohviana account uses that email. Ask them to sign in once, then retry.',
+      `No Ohviana account uses that ${input.email ? 'email' : 'mobile number'}. Ask them to sign in once, then retry.`,
     );
   }
-  const inserted = await db
-    .insert(organizerMembers)
-    .values({ organizerId, userId: user.id, role: input.role })
-    .onConflictDoNothing()
-    .returning({ userId: organizerMembers.userId });
-  if (inserted.length === 0) throw conflict('That person is already a member');
+  await db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({ role: organizerMembers.role })
+      .from(organizerMembers)
+      .where(
+        and(eq(organizerMembers.organizerId, organizerId), eq(organizerMembers.userId, user.id)),
+      );
+    if (existing && existing.role !== 'trek_lead') throw conflict('They are already an owner here');
+    await tx
+      .insert(organizerMembers)
+      .values({ organizerId, userId: user.id, role: 'co_owner' })
+      .onConflictDoUpdate({
+        target: [organizerMembers.organizerId, organizerMembers.userId],
+        set: { role: 'co_owner' },
+      });
+  });
   return listMembers(db, organizerId);
 }
 
 /**
- * Changes a member's role or removes them, never leaving the organizer without an owner.
- * Owner rows are locked so two concurrent demotions can't both pass the check.
+ * Promotes a trek lead to co-owner, or removes a member. The owner never changes. Removing a
+ * trek lead revokes their access (by mobile), so signing in again doesn't bring it back.
  */
 export async function changeMember(
   db: Database,
   organizerId: string,
+  actorId: string,
   targetUserId: string,
-  change: { role: OrganizerRole } | 'remove',
+  change: { role: 'co_owner' } | 'remove',
 ): Promise<Member[]> {
-  await db.transaction(async (tx) => {
-    const owners = await tx
-      .select({ userId: organizerMembers.userId })
-      .from(organizerMembers)
-      .where(and(eq(organizerMembers.organizerId, organizerId), eq(organizerMembers.role, 'owner')))
-      .for('update');
-
-    const [target] = await tx
-      .select({ role: organizerMembers.role })
-      .from(organizerMembers)
-      .where(
-        and(
-          eq(organizerMembers.organizerId, organizerId),
-          eq(organizerMembers.userId, targetUserId),
-        ),
-      );
-    if (!target) throw notFound('Member');
-
-    const losesOwner = target.role === 'owner' && (change === 'remove' || change.role !== 'owner');
-    if (losesOwner && owners.length <= 1) {
-      throw conflict('An organizer must keep at least one owner');
-    }
-
-    const where = and(
-      eq(organizerMembers.organizerId, organizerId),
-      eq(organizerMembers.userId, targetUserId),
+  const [target] = await db
+    .select({ role: organizerMembers.role, phone: users.phone })
+    .from(organizerMembers)
+    .innerJoin(users, eq(users.id, organizerMembers.userId))
+    .where(
+      and(eq(organizerMembers.organizerId, organizerId), eq(organizerMembers.userId, targetUserId)),
     );
-    if (change === 'remove') await tx.delete(organizerMembers).where(where);
-    else await tx.update(organizerMembers).set({ role: change.role }).where(where);
-  });
+  if (!target) throw notFound('Member');
+  if (target.role === 'owner') throw forbidden("The owner can't be changed or removed");
+
+  const where = and(
+    eq(organizerMembers.organizerId, organizerId),
+    eq(organizerMembers.userId, targetUserId),
+  );
+  if (change !== 'remove') {
+    await db.update(organizerMembers).set({ role: change.role }).where(where);
+  } else if (target.role === 'trek_lead' && target.phone) {
+    await revokeLead(db, organizerId, target.phone, actorId);
+  } else {
+    await db.delete(organizerMembers).where(where);
+  }
   return listMembers(db, organizerId);
 }

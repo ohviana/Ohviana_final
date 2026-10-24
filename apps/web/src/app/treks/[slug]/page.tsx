@@ -1,14 +1,16 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { PublicBatchList, PublicTrekDetail, TrekDateList } from '@ohviana/contracts';
-import { BatchList } from '@/components/BatchList';
+import { PublicBatchList, PublicTrekDetail } from '@ohviana/contracts';
+import { DepartureGroups } from '@/components/DepartureGroups';
 import { Icon, type IconName } from '@/components/Icon';
 import { Mountains } from '@/components/Mountains';
-import { DateGrid, DateStrip, dayLabel } from '@/components/TrekDates';
 import { apiFetch, apiFetchOrNotFound, qs } from '@/lib/api';
 import { price } from '@/lib/format';
 import { mediaUrl } from '@/lib/media';
 import { isoDay, type SearchParams } from '@/lib/params';
+
+/** Departures shown on a trek page (grouped by day); a year of weekly trips from a few organizers. */
+const DEPARTURES = 100;
 
 type Params = Promise<{ slug: string }>;
 
@@ -47,32 +49,19 @@ export default async function TrekPage({
   const date = isoDay((await searchParams).date);
 
   const trek = await getTrek(slug);
-  const dates = await apiFetch(`/v1/treks/${encodeURIComponent(slug)}/dates`, TrekDateList, {
-    next: { revalidate: 30 },
-  })
-    .then((d) => d.items)
+  // Every upcoming departure, grouped by day; sold-out ones stay visible (faded).
+  const departures = await apiFetch(
+    `/v1/treks/${encodeURIComponent(slug)}/batches${qs({
+      from: date,
+      to: date,
+      includeUnavailable: 'true',
+      limit: DEPARTURES,
+    })}`,
+    PublicBatchList,
+    { next: { revalidate: 30 } },
+  )
+    .then((l) => l.items)
     .catch(() => null);
-  // A date chosen: every organizer departing that day, bookable first, cheapest first.
-  const options = date
-    ? await apiFetch(
-        `/v1/treks/${encodeURIComponent(slug)}/batches${qs({
-          from: date,
-          to: date,
-          sort: 'price_asc',
-          includeUnavailable: 'true',
-          limit: 50,
-        })}`,
-        PublicBatchList,
-        { next: { revalidate: 30 } },
-      )
-        .then((l) =>
-          [...l.items].sort(
-            (x, y) =>
-              Number(x.availability !== 'available') - Number(y.availability !== 'available'),
-          ),
-        )
-        .catch(() => null)
-    : null;
 
   const a = trek.availability;
 
@@ -143,63 +132,26 @@ export default async function TrekPage({
           </section>
         )}
         <section id="departures" className="stack" style={{ scrollMarginTop: 80 }}>
-          {dates === null ? (
-            <>
-              <h2 style={{ margin: 0 }}>Dates</h2>
-              <p className="notice danger">Dates are unavailable right now. Please try again.</p>
-            </>
-          ) : !date ? (
-            <>
-              <div className="spread">
-                <h2 style={{ margin: 0 }}>Pick a date</h2>
-                {dates.length > 0 && (
-                  <span className="muted small">
-                    {dates.length} upcoming date{dates.length === 1 ? '' : 's'}
-                  </span>
-                )}
-              </div>
-              {dates.length === 0 ? (
-                <div className="empty-state">
-                  <span className="icon-circle">
-                    <Icon name="calendar" size={26} />
-                  </span>
-                  <strong>No upcoming dates yet</strong>
-                  <span className="muted small">Organizers add new dates regularly.</span>
-                </div>
-              ) : (
-                <DateGrid slug={trek.slug} dates={dates} />
-              )}
-            </>
+          <div className="spread">
+            <h2 style={{ margin: 0 }}>Upcoming departures</h2>
+            {date && (
+              <Link href={`/treks/${trek.slug}#departures`} className="small">
+                All dates
+              </Link>
+            )}
+          </div>
+          {departures === null ? (
+            <p className="notice danger">Departures are unavailable right now. Please try again.</p>
+          ) : departures.length === 0 ? (
+            <div className="empty-state">
+              <span className="icon-circle">
+                <Icon name="calendar" size={26} />
+              </span>
+              <strong>No upcoming departures yet</strong>
+              <span className="muted small">Organizers add new dates regularly.</span>
+            </div>
           ) : (
-            <>
-              <div className="spread">
-                <h2 style={{ margin: 0 }}>{dayLabel(date)}</h2>
-                <Link href={`/treks/${trek.slug}#departures`} className="small">
-                  All dates
-                </Link>
-              </div>
-              {dates.length > 0 && <DateStrip slug={trek.slug} dates={dates} selected={date} />}
-              {options === null ? (
-                <p className="notice danger">Departures are unavailable right now.</p>
-              ) : options.length === 0 ? (
-                <div className="empty-state">
-                  <span className="icon-circle">
-                    <Icon name="calendar" size={26} />
-                  </span>
-                  <strong>No departures on this date</strong>
-                  <span className="muted small">Pick another date above.</span>
-                </div>
-              ) : (
-                <>
-                  <p className="muted small" style={{ margin: 0 }}>
-                    {options.length === 1
-                      ? '1 organizer runs this date.'
-                      : `${options.length} organizers run this date — cheapest first.`}
-                  </p>
-                  <BatchList batches={options} byOrganizer />
-                </>
-              )}
-            </>
+            <DepartureGroups batches={departures} showTrek={false} />
           )}
         </section>
 

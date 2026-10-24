@@ -58,7 +58,7 @@ export default function TreksPage() {
                 <span className="icon-circle" style={{ width: 40, height: 40 }}>
                   <Icon name="mountain" />
                 </span>
-                <StatusBadge status={t.status} />
+                {t.status === 'archived' && <StatusBadge status={t.status} />}
               </div>
               <h3 style={{ margin: 0 }}>{t.title}</h3>
               <span className="meta-line">

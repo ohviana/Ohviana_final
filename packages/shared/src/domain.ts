@@ -3,7 +3,12 @@
 export const ORGANIZER_STATUSES = ['pending', 'approved', 'rejected', 'suspended'] as const;
 export type OrganizerStatus = (typeof ORGANIZER_STATUSES)[number];
 
-export const ORGANIZER_ROLES = ['owner', 'manager', 'staff'] as const;
+/**
+ * owner: created the organizer; exactly one, never changed.
+ * co_owner: the same access as the owner, added on the Team page.
+ * trek_lead: named (by mobile) on a batch; sees only the batches they lead.
+ */
+export const ORGANIZER_ROLES = ['owner', 'co_owner', 'trek_lead'] as const;
 export type OrganizerRole = (typeof ORGANIZER_ROLES)[number];
 
 export const CONTENT_STATUSES = ['draft', 'published', 'archived'] as const;

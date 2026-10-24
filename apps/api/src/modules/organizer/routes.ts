@@ -36,6 +36,8 @@ import {
   SetBatchPickupsRequest,
   UpdateBatchRequest,
   UpdateMemberRequest,
+  TrekLeadList,
+  TrekLeadRequest,
   UpdateOrganizerProfileRequest,
   UpdateOrganizerTrekRequest,
   UpdatePickupPointRequest,
@@ -43,6 +45,13 @@ import {
 import { PHOTO_CATEGORIES } from '@ohviana/shared';
 import { badRequest } from '../../lib/errors';
 import { assertOrgPermission, requireAuth, requireOrganizer } from '../../plugins/auth';
+import {
+  assertBatchVisible,
+  batchScope,
+  listTrekLeads,
+  restoreLead,
+  revokeLead,
+} from './leads.service';
 import { addTrekPhoto, deleteTrekPhoto, updateTrekPhoto } from '../media/service';
 import { LIMITS } from '../../plugins/rate-limit';
 import { listCatalogTreks } from '../catalog/service';
@@ -66,6 +75,7 @@ import {
   getProfile,
   listMembers,
   registerOrganizer,
+  setUploadedLogo,
   updateProfile,
 } from './profile.service';
 import {
@@ -154,6 +164,38 @@ export const organizerRoutes: FastifyPluginAsyncZod = async (app) => {
     async (request) => updateProfile(app.db, org(request), request.body),
   );
 
+  app.post(
+    '/profile/logo',
+    {
+      onRequest: g('org:edit_profile'),
+      config: { rateLimit: { max: 20, timeWindow: '1 hour' } },
+      schema: {
+        tags,
+        summary: 'Upload a logo (multipart field `file`; JPEG/PNG/WebP ≤ 10 MB)',
+        security,
+        consumes: ['multipart/form-data'],
+        response: { 200: OrganizerProfile, ...errors },
+      },
+    },
+    async (request) => {
+      let file: Buffer;
+      try {
+        const part = await request.file();
+        if (!part) throw badRequest('Attach a logo image');
+        file = await part.toBuffer();
+      } catch (err) {
+        if ((err as { code?: string }).code === 'FST_REQ_FILE_TOO_LARGE') {
+          throw badRequest('That image is larger than 10 MB');
+        }
+        if ((err as { code?: string }).code === 'FST_INVALID_MULTIPART_CONTENT_TYPE') {
+          throw badRequest('Send the logo as multipart/form-data');
+        }
+        throw err;
+      }
+      return setUploadedLogo(app.db, org(request), file);
+    },
+  );
+
   app.get(
     '/dashboard/summary',
     {
@@ -201,7 +243,7 @@ export const organizerRoutes: FastifyPluginAsyncZod = async (app) => {
       onRequest: g('org:manage_members'),
       schema: {
         tags,
-        summary: "Change a member's role (an owner must remain)",
+        summary: 'Promote a trek lead to co-owner (the owner never changes)',
         security,
         params: MemberParams,
         body: UpdateMemberRequest,
@@ -209,9 +251,13 @@ export const organizerRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (request) => ({
-      items: await changeMember(app.db, org(request), request.params.userId, {
-        role: request.body.role,
-      }),
+      items: await changeMember(
+        app.db,
+        org(request),
+        requireAuth(request).userId,
+        request.params.userId,
+        { role: request.body.role },
+      ),
     }),
   );
 
@@ -221,15 +267,73 @@ export const organizerRoutes: FastifyPluginAsyncZod = async (app) => {
       onRequest: g('org:manage_members'),
       schema: {
         tags,
-        summary: 'Remove a member (an owner must remain)',
+        summary: 'Remove a co-owner, or revoke a trek lead (the owner never changes)',
         security,
         params: MemberParams,
         response: { 200: MemberList, ...errors },
       },
     },
     async (request) => ({
-      items: await changeMember(app.db, org(request), request.params.userId, 'remove'),
+      items: await changeMember(
+        app.db,
+        org(request),
+        requireAuth(request).userId,
+        request.params.userId,
+        'remove',
+      ),
     }),
+  );
+
+  // ---------- Trek leads (named on batches by mobile) ----------
+
+  app.get(
+    '/trek-leads',
+    {
+      onRequest: g('org:manage_members'),
+      schema: {
+        tags,
+        summary: 'Everyone named as a lead on your batches, with their access',
+        security,
+        response: { 200: TrekLeadList, ...errors },
+      },
+    },
+    async (request) => ({ items: await listTrekLeads(app.db, org(request)) }),
+  );
+
+  app.post(
+    '/trek-leads/revoke',
+    {
+      onRequest: g('org:manage_members'),
+      schema: {
+        tags,
+        summary: "Take a trek lead's access away (stays away after they sign in again)",
+        security,
+        body: TrekLeadRequest,
+        response: { 200: TrekLeadList, ...errors },
+      },
+    },
+    async (request) => {
+      await revokeLead(app.db, org(request), request.body.phone, requireAuth(request).userId);
+      return { items: await listTrekLeads(app.db, org(request)) };
+    },
+  );
+
+  app.post(
+    '/trek-leads/restore',
+    {
+      onRequest: g('org:manage_members'),
+      schema: {
+        tags,
+        summary: "Give a revoked trek lead's access back",
+        security,
+        body: TrekLeadRequest,
+        response: { 200: TrekLeadList, ...errors },
+      },
+    },
+    async (request) => {
+      await restoreLead(app.db, org(request), request.body.phone);
+      return { items: await listTrekLeads(app.db, org(request)) };
+    },
   );
 
   // ---------- Catalog ----------
@@ -311,7 +415,8 @@ export const organizerRoutes: FastifyPluginAsyncZod = async (app) => {
       onRequest: g('treks:write'),
       schema: {
         tags,
-        summary: 'Create a trek with its pickup points and first batch, as draft or published',
+        summary:
+          'Create a trek (live as soon as it has a destination); optional pickups and first batch',
         security,
         body: CreateOrganizerTrekRequest,
         response: { 201: OrganizerTrek, ...errors },
@@ -344,7 +449,7 @@ export const organizerRoutes: FastifyPluginAsyncZod = async (app) => {
       onRequest: g('treks:write'),
       schema: {
         tags,
-        summary: 'Update a template (including publish/archive via status)',
+        summary: 'Update a trek (archive or restore via status)',
         security,
         params: IdParams,
         body: UpdateOrganizerTrekRequest,
@@ -534,23 +639,26 @@ export const organizerRoutes: FastifyPluginAsyncZod = async (app) => {
       onRequest: g('batches:write'),
       schema: {
         tags,
-        summary: 'Create many draft batches at once (all-or-nothing), e.g. weekly departures',
+        summary:
+          'Create many batches at once (all-or-nothing), e.g. weekly departures; drafts unless publish',
         security,
         params: IdParams,
         body: BulkCreateBatchesRequest,
         response: { 201: OrganizerBatchArray, ...errors },
       },
     },
-    async (request, reply) =>
-      reply.status(201).send({
+    async (request, reply) => {
+      if (request.body.publish) assertOrgPermission(requireOrganizer(request), 'batches:publish');
+      return reply.status(201).send({
         items: await bulkCreateBatches(app.db, org(request), request.params.id, request.body),
-      }),
+      });
+    },
   );
 
   app.get(
     '/batches',
     {
-      onRequest: g('org:read'),
+      onRequest: g('batches:read'),
       schema: {
         tags,
         summary: 'Batches, filterable by dashboard view (draft, upcoming, ongoing, sold_out, ...)',
@@ -559,22 +667,26 @@ export const organizerRoutes: FastifyPluginAsyncZod = async (app) => {
         response: { 200: OrganizerBatchList, ...errors },
       },
     },
-    async (request) => listBatches(app.db, org(request), request.query),
+    async (request) =>
+      listBatches(app.db, org(request), request.query, batchScope(requireOrganizer(request))),
   );
 
   app.get(
     '/batches/:id',
     {
-      onRequest: g('org:read'),
+      onRequest: g('batches:read'),
       schema: {
         tags,
-        summary: 'Get a batch',
+        summary: 'Get a batch (trek leads: only batches they lead)',
         security,
         params: IdParams,
         response: { 200: OrganizerBatch, ...errors },
       },
     },
-    async (request) => getBatch(app.db, org(request), request.params.id),
+    async (request) => {
+      await assertBatchVisible(app.db, requireOrganizer(request), request.params.id);
+      return getBatch(app.db, org(request), request.params.id);
+    },
   );
 
   app.patch(
