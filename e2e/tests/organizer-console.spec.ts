@@ -125,7 +125,8 @@ test('organizer + admin walkthrough, end to end', async ({ page }) => {
   await page.getByRole('button', { name: 'Save trek' }).click();
   await page.waitForURL(/\/dashboard\/treks\/[0-9a-f-]+\?created=1/);
   await expect(page.getByText('Trek saved. Add its dates below')).toBeVisible();
-  await expect(page.locator('.photo-slot img')).toHaveCount(1);
+  // View mode shows photos in the carousel (thumbnail slots appear only in Edit trek).
+  await expect(page.locator('.photo-track img')).toHaveCount(1);
 
   // Dates are added on the trek page with pickups and a trek lead, and published right there.
   await page.getByRole('button', { name: '+ Add dates' }).click();
