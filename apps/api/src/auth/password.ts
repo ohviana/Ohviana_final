@@ -13,7 +13,6 @@ const KEY_LENGTH = 64;
 const MAX_MEM = 64 * 1024 * 1024;
 
 export const PASSWORD_MIN = 8;
-export const PASSWORD_MAX = 128;
 
 /** Self-describing hash: `scrypt$N$r$p$saltB64$hashB64` (parameters can change later). */
 export async function hashPassword(password: string): Promise<string> {

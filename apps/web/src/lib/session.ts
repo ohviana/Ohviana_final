@@ -17,7 +17,6 @@ export const AUTH_MODE: AuthMode = (['password', 'dev'] as const).includes(
 )
   ? (process.env.NEXT_PUBLIC_AUTH_MODE as AuthMode)
   : 'supabase';
-export const DEV_AUTH = AUTH_MODE === 'dev';
 
 const SESSION_KEY = 'ohviana:session';
 const DEV_USER_KEY = 'ohviana:dev-user';
