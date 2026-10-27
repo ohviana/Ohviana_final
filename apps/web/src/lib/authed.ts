@@ -1,7 +1,7 @@
 'use client';
 
 import type { z } from 'zod';
-import { ApiError, apiFetch } from './api';
+import { ApiError, apiFetch, publicApiBase } from './api';
 import { authHeader } from './session';
 
 export interface AuthedOptions {
@@ -35,7 +35,7 @@ export async function authedFetch<T extends z.ZodType>(
 
 /** Authenticated file download (e.g. attendee CSV): fetches with headers, saves as a file. */
 export async function authedDownload(path: string, organizerId: string): Promise<void> {
-  const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+  const base = publicApiBase();
   const res = await fetch(`${base}${path}`, {
     headers: { ...(await authHeader()), 'x-organizer-id': organizerId },
     cache: 'no-store',

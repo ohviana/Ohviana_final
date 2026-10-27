@@ -6,10 +6,10 @@ import type { PhotoCategory } from '@ohviana/shared';
 import { Icon } from '@/components/Icon';
 import { useOrg } from '@/components/dash/org-context';
 import { Outcome } from '@/components/dash/ui';
+import { publicApiBase } from '@/lib/api';
 import { mediaUrl } from '@/lib/media';
 import { authHeader } from '@/lib/session';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
 /** Photos per trek, the same as on the add-trek form. The first is the cover. */
 export const MAX_PHOTOS = 3;
 export const MAX_BYTES = 10 * 1024 * 1024;
@@ -25,7 +25,7 @@ export async function uploadTrekPhoto(
   form.append('category', category);
   form.append('caption', '');
   form.append('file', file);
-  const res = await fetch(`${API_BASE_URL}/v1/organizer/treks/${trekId}/photos`, {
+  const res = await fetch(`${publicApiBase()}/v1/organizer/treks/${trekId}/photos`, {
     method: 'POST',
     headers: { ...(await authHeader()), 'x-organizer-id': organizerId },
     body: form,

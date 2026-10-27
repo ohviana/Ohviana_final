@@ -2,11 +2,11 @@
 
 import { useEffect, useId, useMemo } from 'react';
 import { ErrorResponse, OrganizerProfile } from '@ohviana/contracts';
+import { publicApiBase } from '@/lib/api';
 import { logoSrc } from '@/lib/media';
 import { authHeader } from '@/lib/session';
 import { Icon } from './Icon';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
 const MAX_BYTES = 10 * 1024 * 1024;
 
 export interface LogoChoice {
@@ -26,7 +26,7 @@ export const logoChoice = (current: string | null): LogoChoice => ({
 export async function uploadLogo(organizerId: string, file: File): Promise<OrganizerProfile> {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${API_BASE_URL}/v1/organizer/profile/logo`, {
+  const res = await fetch(`${publicApiBase()}/v1/organizer/profile/logo`, {
     method: 'POST',
     headers: { ...(await authHeader()), 'x-organizer-id': organizerId },
     body: form,
