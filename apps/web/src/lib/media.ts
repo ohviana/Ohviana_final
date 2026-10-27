@@ -1,10 +1,10 @@
 import type { PhotoCategory } from '@ohviana/shared';
-import { publicApiBase } from './api';
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
 
 /** Photo URLs come from the API as paths; images are served by the API. */
 export function mediaUrl(path: string): string {
-  // Rendered into HTML for the browser, so always the public base, never the internal one.
-  return `${publicApiBase()}${path}`;
+  return `${API_BASE_URL}${path}`;
 }
 
 /** An organizer logo: an https link as given, or an uploaded one (API path). */

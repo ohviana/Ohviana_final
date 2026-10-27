@@ -2,29 +2,7 @@ import { notFound } from 'next/navigation';
 import { ErrorResponse } from '@ohviana/contracts';
 import type { z } from 'zod';
 
-/**
- * The API base for URLs the browser uses (links, images, uploads). On Vercel it is empty: the
- * API is on the same domain under /v1 (see vercel.json). Locally it is http://localhost:4000.
- */
-export function publicApiBase(): string {
-  return process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
-}
-
-/**
- * The API base for fetches: on the server, Vercel's private binding to the API service
- * (API_INTERNAL_URL, injected at runtime only); in the browser, the public base.
- */
-function fetchBase(): string {
-  if (typeof window !== 'undefined') return publicApiBase();
-  const base = process.env.API_INTERNAL_URL || publicApiBase();
-  // On the server a same-origin ('') base has nothing to resolve against. That happens while
-  // Vercel prerenders at build time, before bindings exist: fail fast (callers fall back and the
-  // page refreshes at runtime) rather than let the request hang the build.
-  if (!/^https?:\/\//.test(base)) {
-    throw new ApiError(503, 'API_UNAVAILABLE', 'The API is not reachable from here yet');
-  }
-  return base.replace(/\/+$/, '');
-}
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
 
 export class ApiError extends Error {
   constructor(
@@ -47,7 +25,7 @@ export async function apiFetch<T extends z.ZodType>(
   schema: T,
   init: RequestInit = {},
 ): Promise<z.infer<T>> {
-  const res = await fetch(`${fetchBase()}${path}`, {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: { accept: 'application/json', ...init.headers },
   });
